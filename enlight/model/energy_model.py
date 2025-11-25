@@ -13,13 +13,11 @@ class EnlightModel:
     Attributes:
         T (int): Number of time steps.
         Z (int): Number of zones.
-        G (int): Number of conventional units.
+        G (int): Number of conventional techs.
         L (int): Number of transmission lines.
-        G_hydro_res (int): Number of hydro reservoir units.
-        G_hydro_ps (int): Number of pumped hydro storage units.
-        G_bess (int): Number of battery energy storage system units.
-        L_DH (int): Number of DH units
-        L_PtX (int): Number of PtX units
+        G_hydro_res (int): Number of hydro reservoir types.
+        L_DH (int): Number of DH techs
+        L_PtX (int): Number of PtX products
     """
 
     def __init__(self, dataloader_obj, simulation_path, logger):
@@ -51,8 +49,8 @@ class EnlightModel:
         self.Z = len(self.bidding_zones)  # Number of zones
         self.G = len(self.data.conventional_units_id)
         self.G_hydro_res = len(self.data.hydro_res_units_id)
-        self.G_hydro_ps = len(self.data.hydro_ps_units_id)
-        self.G_bess = len(self.data.bess_units_id)
+        # self.G_hydro_ps = len(self.data.hydro_ps_units_id)
+        # self.G_bess = len(self.data.bess_units_id)
         self.L_DH = len(self.data.dh_units_id)
         self.L_PtX = len(self.data.ptx_units_id)
         self.W = self.data.W  # Number of weeks included
@@ -150,27 +148,27 @@ class EnlightModel:
             # Bid / consumption - [MW]
             # Offer / production - [MW]
             # State of charge (SOC) - [MWh]
-        # Hydro pumped CONSUMPTION variable (shape: T x G_hydro_ps)
+        # Hydro pumped CONSUMPTION variable (shape: T x Z)
         # upper bound = pumped hydro capacity repeated for all time steps
         self.hydro_ps_units_bid = self.model.add_variables(
             lower=0,
             upper=self.data.hydro_ps_units_el_cap,  # np.array
-            coords=[self.times, self.data.hydro_ps_units_id],
-            dims=["T", "G_hydro_ps"],
+            coords=[self.times, self.data.bidding_zones],
+            dims=["T", "Z"],
             name='hydro_ps_units_bid'
         )
         self.hydro_ps_units_offer = self.model.add_variables(
             lower=0,
             upper=self.data.hydro_ps_units_el_cap,  # np.array
-            coords=[self.times, self.data.hydro_ps_units_id],
-            dims=["T", "G_hydro_ps"],
+            coords=[self.times, self.data.bidding_zones],
+            dims=["T", "Z"],
             name='hydro_ps_units_offer'
         )
         self.hydro_ps_units_SOC = self.model.add_variables(
             lower=0,
             upper=self.data.hydro_ps_units_storage_cap,  # np.array
-            coords=[self.times, self.data.hydro_ps_units_id],
-            dims=["T", "G_hydro_ps"],
+            coords=[self.times, self.data.bidding_zones],
+            dims=["T", "Z"],
             name='hydro_ps_units_SOC'
         )
 
@@ -178,27 +176,27 @@ class EnlightModel:
             # Bid / charge - [MW]
             # Offer / discharge - [MW]
             # State of charge (SOC) - [MWh]
-        # BESS charge variable (shape: T x G_hydro_ps)
+        # BESS charge variable (shape: T x Z)
         # upper bound = BESS power capacity repeated for all time steps
         self.bess_units_bid = self.model.add_variables(
             lower=0,
             upper=self.data.bess_units_el_cap,  # np.array
-            coords=[self.times, self.data.bess_units_id],
-            dims=["T", "G_bess"],
+            coords=[self.times, self.data.bidding_zones],
+            dims=["T", "Z"],
             name='bess_units_bid'
         )
         self.bess_units_offer = self.model.add_variables(
             lower=0,
             upper=self.data.bess_units_el_cap,  # np.array
-            coords=[self.times, self.data.bess_units_id],
-            dims=["T", "G_bess"],
+            coords=[self.times, self.data.bidding_zones],
+            dims=["T", "Z"],
             name='bess_units_offer'
         )
         self.bess_units_SOC = self.model.add_variables(
             lower=0,
             upper=self.data.bess_units_storage_cap,  # np.array
-            coords=[self.times, self.data.bess_units_id],
-            dims=["T", "G_bess"],
+            coords=[self.times, self.data.bidding_zones],
+            dims=["T", "Z"],
             name='bess_units_SOC'
         )
 
@@ -247,14 +245,14 @@ class EnlightModel:
              + self.hydro_ror_offer
              + self.conventional_units_offer.dot(self.data.G_Z_xr)  # type: ignore
              + self.hydro_res_units_offer.dot(self.data.G_hydro_res_Z_xr)
-             + self.hydro_ps_units_offer.dot(self.data.G_hydro_ps_Z_xr)
-             + self.bess_units_offer.dot(self.data.G_bess_Z_xr)
+             + self.hydro_ps_units_offer#.dot(self.data.G_hydro_ps_Z_xr)
+             + self.bess_units_offer#.dot(self.data.G_bess_Z_xr)
              ==
              self.demand_inflexible_classic_bid
              + self.demand_flexible_classic_bid
              + self.electricity_export
-             + self.hydro_ps_units_bid.dot(self.data.G_hydro_ps_Z_xr)
-             + self.bess_units_bid.dot(self.data.G_bess_Z_xr)
+             + self.hydro_ps_units_bid#.dot(self.data.G_hydro_ps_Z_xr)
+             + self.bess_units_bid#.dot(self.data.G_bess_Z_xr)
              + self.ptx_units_bid.dot(self.data.L_PtX_Z_xr)
              + self.dh_units_bid.dot(self.data.L_DH_Z_xr)
              ),
@@ -309,7 +307,7 @@ class EnlightModel:
             name='demand_flexible_classic_limit'
         )
 
-        self.hydro_ps_units_SOC_balance = self.model.add_constraints(  # Shape: (T, G_hydro_ps)
+        self.hydro_ps_units_SOC_balance = self.model.add_constraints(  # Shape: (T, Z)
             # In each hour the change in the SOC is equal to the net energy
             #   charged/discharged. In the first hour we add the initial SOC in MWh.
             self.hydro_ps_units_SOC.diff(n=1, dim="T")  # .isel(T=slice(1, None)) is the reason for "UserWarning". It messes with the coordinates.
@@ -381,7 +379,7 @@ class EnlightModel:
         """
         self.logger.info('Saving the .lp model file')
         Path('results').mkdir(parents=True, exist_ok=True)
-        self.model.to_file(Path(self.simulation_path) / 'results' / 'debug_model_ptx_dh.lp', io_api='lp', explicit_coordinate_names=True)
+        self.model.to_file(Path(self.simulation_path) / 'results' / 'debug_model_agg3.lp', io_api='lp', explicit_coordinate_names=True)
         self.logger.info('Saved .lp model file')
 
 
@@ -391,4 +389,4 @@ class EnlightModel:
         """
         self.solve_model(solver_name=self.data.solver_name)
         utils.save_model_results(self)#, week=self.data.week)
-        # self.save_model_to_lp_file()
+        self.save_model_to_lp_file()

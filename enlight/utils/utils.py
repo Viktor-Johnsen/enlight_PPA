@@ -162,77 +162,79 @@ def save_model_results(self):#, week: int):
         )
         self.results_dict["electricity_prices"] = self.model.dual["power_balance"].to_pandas()
 
-        # # ###### ADDED a while ago but updated to be faster - MARGINAL GENERATOR ######
-        # # # Read out the marginal generator by its unit name
-        thermal_el_cap_xr = xr.DataArray(
-            self.data.conventional_units_el_cap,
-            dims=["T", "G"],
-            coords=[self.times, self.data.conventional_units_id]
-        )
-        thermal_marginal_mask = (self.conventional_units_offer.solution > 0) & (self.conventional_units_offer.solution < thermal_el_cap_xr)
-        thermal_marginal_costs = self.data.conventional_units_marginal_cost_df.where(thermal_marginal_mask.to_pandas())
+        # The below code works if the participants are UNIT-based, however, this is incredibly inefficient for large models.
+        # It might be updated at a later point in time.
+        # # # ###### ADDED a while ago but updated to be faster - MARGINAL GENERATOR ######
+        # # # # Read out the marginal generator by its unit name
+        # thermal_el_cap_xr = xr.DataArray(
+        #     self.data.conventional_units_el_cap,
+        #     dims=["T", "G"],
+        #     coords=[self.times, self.data.conventional_units_id]
+        # )
+        # thermal_marginal_mask = (self.conventional_units_offer.solution > 0) & (self.conventional_units_offer.solution < thermal_el_cap_xr)
+        # thermal_marginal_costs = self.data.conventional_units_marginal_cost_df.where(thermal_marginal_mask.to_pandas())
 
-        hydro_res_el_cap_xr = xr.DataArray(
-            self.data.hydro_res_units_el_cap,
-            dims=["T", "G_hydro_res"],
-            coords=[self.times, self.data.hydro_res_units_id]
-        )
-        hydro_res_marginal_mask = (self.hydro_res_units_offer.solution > 0) & (self.hydro_res_units_offer.solution < hydro_res_el_cap_xr)
-        hydro_res_marginal_costs = self.data.hydro_res_units_marginal_cost_df.where(hydro_res_marginal_mask.to_pandas())
+        # hydro_res_el_cap_xr = xr.DataArray(
+        #     self.data.hydro_res_units_el_cap,
+        #     dims=["T", "G_hydro_res"],
+        #     coords=[self.times, self.data.hydro_res_units_id]
+        # )
+        # hydro_res_marginal_mask = (self.hydro_res_units_offer.solution > 0) & (self.hydro_res_units_offer.solution < hydro_res_el_cap_xr)
+        # hydro_res_marginal_costs = self.data.hydro_res_units_marginal_cost_df.where(hydro_res_marginal_mask.to_pandas())
 
-        hydro_ps_el_cap_xr = xr.DataArray(
-            self.data.hydro_ps_units_el_cap,
-            dims=["T", "G_hydro_ps"],
-            coords=[self.times, self.data.hydro_ps_units_id]
-        )
-        hydro_ps_marginal_mask = (self.hydro_ps_units_offer.solution > 0) & (self.hydro_ps_units_offer.solution < hydro_ps_el_cap_xr)
-        hydro_ps_marginal_costs = self.data.hydro_ps_units_marginal_cost_dfs["Offer_price"].where(hydro_ps_marginal_mask.to_pandas())
+        # hydro_ps_el_cap_xr = xr.DataArray(
+        #     self.data.hydro_ps_units_el_cap,
+        #     dims=["T", "G_hydro_ps"],
+        #     coords=[self.times, self.data.hydro_ps_units_id]
+        # )
+        # hydro_ps_marginal_mask = (self.hydro_ps_units_offer.solution > 0) & (self.hydro_ps_units_offer.solution < hydro_ps_el_cap_xr)
+        # hydro_ps_marginal_costs = self.data.hydro_ps_units_marginal_cost_dfs["Offer_price"].where(hydro_ps_marginal_mask.to_pandas())
 
-        bess_el_cap_xr = xr.DataArray(
-            self.data.bess_units_el_cap,
-            dims=["T", "G_bess"],
-            coords=[self.times, self.data.bess_units_id]
-        )
-        bess_marginal_mask = (self.bess_units_offer.solution > 0) & (self.bess_units_offer.solution < bess_el_cap_xr)
-        bess_marginal_costs = self.data.bess_units_marginal_cost_dfs["Offer_price"].where(bess_marginal_mask.to_pandas())
+        # bess_el_cap_xr = xr.DataArray(
+        #     self.data.bess_units_el_cap,
+        #     dims=["T", "G_bess"],
+        #     coords=[self.times, self.data.bess_units_id]
+        # )
+        # bess_marginal_mask = (self.bess_units_offer.solution > 0) & (self.bess_units_offer.solution < bess_el_cap_xr)
+        # bess_marginal_costs = self.data.bess_units_marginal_cost_dfs["Offer_price"].where(bess_marginal_mask.to_pandas())
 
-        # Build final dataframe
-        marginal_generators_df = pd.DataFrame({
-            'thermal_generator_id': [
-                tuple(thermal_marginal_costs.columns[thermal_marginal_mask.sel(T=t).values])
-                for t in self.times
-            ],
-            'thermal_generator_cost': [
-                tuple(thermal_marginal_costs.loc[t].dropna().values)
-                for t in self.times
-            ],
-            'hydro_res_generator_id': [
-                tuple(hydro_res_marginal_costs.columns[hydro_res_marginal_mask.sel(T=t).values])
-                for t in self.times
-            ],
-            'hydro_res_generator_cost': [
-                tuple(hydro_res_marginal_costs.loc[t].dropna().values)
-                for t in self.times
-            ],
-            'hydro_ps_generator_id': [
-                tuple(hydro_ps_marginal_costs.columns[hydro_ps_marginal_mask.sel(T=t).values])
-                for t in self.times
-            ],
-            'hydro_ps_generator_cost': [
-                tuple(hydro_ps_marginal_costs.loc[t].dropna().values)
-                for t in self.times
-            ],
-            'bess_generator_id': [
-                tuple(bess_marginal_costs.columns[bess_marginal_mask.sel(T=t).values])
-                for t in self.times
-            ],
-            'bess_generator_cost': [
-                tuple(bess_marginal_costs.loc[t].dropna().values)
-                for t in self.times
-            ]
-        }, index=self.data.times)
+        # # Build final dataframe
+        # marginal_generators_df = pd.DataFrame({
+        #     'thermal_generator_id': [
+        #         tuple(thermal_marginal_costs.columns[thermal_marginal_mask.sel(T=t).values])
+        #         for t in self.times
+        #     ],
+        #     'thermal_generator_cost': [
+        #         tuple(thermal_marginal_costs.loc[t].dropna().values)
+        #         for t in self.times
+        #     ],
+        #     'hydro_res_generator_id': [
+        #         tuple(hydro_res_marginal_costs.columns[hydro_res_marginal_mask.sel(T=t).values])
+        #         for t in self.times
+        #     ],
+        #     'hydro_res_generator_cost': [
+        #         tuple(hydro_res_marginal_costs.loc[t].dropna().values)
+        #         for t in self.times
+        #     ],
+        #     'hydro_ps_generator_id': [
+        #         tuple(hydro_ps_marginal_costs.columns[hydro_ps_marginal_mask.sel(T=t).values])
+        #         for t in self.times
+        #     ],
+        #     'hydro_ps_generator_cost': [
+        #         tuple(hydro_ps_marginal_costs.loc[t].dropna().values)
+        #         for t in self.times
+        #     ],
+        #     'bess_generator_id': [
+        #         tuple(bess_marginal_costs.columns[bess_marginal_mask.sel(T=t).values])
+        #         for t in self.times
+        #     ],
+        #     'bess_generator_cost': [
+        #         tuple(bess_marginal_costs.loc[t].dropna().values)
+        #         for t in self.times
+        #     ]
+        # }, index=self.data.times)
 
-        self.results_dict["marginal_generator"] = marginal_generators_df
+        # self.results_dict["marginal_generator"] = marginal_generators_df
 
         ################################################
 
@@ -275,7 +277,7 @@ def save_model_results(self):#, week: int):
 
         # List storage types (BY UNIT).
         stor_units_list = ['bess_units', 'hydro_ps_units']
-        stor_units_map_to_zone = dict(zip(stor_units_list, [self.data.G_bess_Z_df, self.data.G_hydro_ps_Z_df]))
+        # stor_units_map_to_zone = dict(zip(stor_units_list, [self.data.G_bess_Z_df, self.data.G_hydro_ps_Z_df]))
         stor_units_marginal_cost_dfs = dict(zip(stor_units_list, [self.data.bess_units_marginal_cost_dfs, self.data.hydro_ps_units_marginal_cost_dfs]))
 
         # List demands that are given BY UNIT.
@@ -318,15 +320,15 @@ def save_model_results(self):#, week: int):
             stor_offer = stor_ + "_offer_sol"
             stor_bid = stor_ + "_bid_sol"
             # Get the offer revenue and bid power costs
-            self.results_econ["revenues"][stor_] = (self.results_dict[stor_offer] * (self.results_dict['electricity_prices'].dot(stor_units_map_to_zone[stor_].T))).sum(axis=0)
-            self.results_econ["costs"][stor_] = (self.results_dict[stor_bid] * (self.results_dict['electricity_prices'].dot(stor_units_map_to_zone[stor_].T))).sum(axis=0)
+            self.results_econ["revenues"][stor_] = (self.results_dict[stor_offer] * self.results_dict['electricity_prices']).sum(axis=0)
+            self.results_econ["costs"][stor_] = (self.results_dict[stor_bid] * self.results_dict['electricity_prices']).sum(axis=0)
 
             # Calculate the social welfare when considering the bid as a "normal" load and the offer as a "normal" generator.
-            profit_offer = (self.results_dict[stor_offer] * (self.results_dict['electricity_prices'].dot(stor_units_map_to_zone[stor_].T)) - self.results_dict[stor_offer] * stor_units_marginal_cost_dfs[stor_]["Offer_price"]).sum(axis=0)
+            profit_offer = (self.results_dict[stor_offer] * self.results_dict['electricity_prices'] - self.results_dict[stor_offer] * stor_units_marginal_cost_dfs[stor_]["Offer_price"]).sum(axis=0)
             
-            profit_bid = (self.results_dict[stor_bid] * stor_units_marginal_cost_dfs[stor_]['Bid_price'] - self.results_dict[stor_bid] * (self.results_dict['electricity_prices'].dot(stor_units_map_to_zone[stor_].T))).sum(axis=0)
+            profit_bid = (self.results_dict[stor_bid] * stor_units_marginal_cost_dfs[stor_]['Bid_price'] - self.results_dict[stor_bid] * self.results_dict['electricity_prices']).sum(axis=0)
             
-            self.results_econ['profits_sw'][stor_] = (profit_offer + profit_bid).sum()
+            self.results_econ['profits_sw'][stor_] = profit_offer + profit_bid
 
         # Get PtX and DH units utilities and power costs
         for dem in dem_units_list:
@@ -349,14 +351,14 @@ def save_model_results(self):#, week: int):
         # Compare social welfare from this function and from the model.
         self.results_econ["consumer surplus"] = sum(map(lambda x: self.results_econ['profits'][x.replace("_bid_sol","")].sum(), dem_list+dem_units_list))
         self.results_econ["producer surplus"] = sum(map(lambda x: self.results_econ['profits'][x.replace("_offer_sol","")].sum(), vre_list+gen_units_list+stor_units_list+['lineflow']))
-        self.results_econ["producer surplus perceived"] = sum(map(lambda x: self.results_econ['profits'][x.replace("_offer_sol","")].sum(), vre_list+gen_units_list+['lineflow'])) + sum(map(lambda x: self.results_econ['profits_sw'][x].sum(), stor_units_list))
+        self.results_econ["producer surplus perceived"] = sum(map(lambda x: self.results_econ['profits'][x.replace("_offer_sol","")].sum(), vre_list+gen_units_list+['lineflow'])) + sum(map(lambda x: self.results_econ['profits_sw'][x].sum() if not (type(x)==float or type(x)==int) else 0, stor_units_list))
         self.results_econ["social welfare"] =  self.results_econ["producer surplus"] + self.results_econ["consumer surplus"]
         self.results_econ["social welfare perceived"] =  self.results_econ["producer surplus perceived"] + self.results_econ["consumer surplus"]
 
+        self.logger.info('Results processed')
     except Exception as e:
         print(f"Error processing results: {e}")
         # raise e
-    self.logger.info('Results processed')
     
 def make_aggregated_supply_and_demand_curves(demand_curve_unsorted, supply_curve_unsorted, colors=['#990000', '#2F3EEA']):
     '''
@@ -445,23 +447,31 @@ def get_unsorted_aggregated_market_curves_from_dataloader_object(example_hour, d
             dataloader_obj.flexible_demands_dfs['demand_flexible_classic']['capacity'].sum(axis=1)[h],
             # Storage
                 # BESS
-            dataloader_obj.bess_units_df.capacity_el.values,
+            # dataloader_obj.bess_units_df.capacity_el.values,
+            dataloader_obj.agg_bess.capacity_el.values,
                 # PHS
-            dataloader_obj.hydro_ps_units.capacity_el.values,
+            # dataloader_obj.hydro_ps_units.capacity_el.values,
+            dataloader_obj.agg_phs.capacity_el.values,
             # PtX
-            dataloader_obj.ptx_units_df["Electric capacity"].values,
+            # dataloader_obj.ptx_units_df["Electric capacity"].values,
+            dataloader_obj.agg_ptx.capacity_el.values,
             # DH
-            dataloader_obj.dh_units_df["Thermal capacity"].values
+            # dataloader_obj.dh_units_df["Thermal capacity"].values
+            dataloader_obj.agg_dh.capacity_el.values
         ])
         ,
         # 2nd column is the bid price (VOLL or WTP)
         np.hstack([
             dataloader_obj.voll_classic,
             dataloader_obj.wtp_classic,
-            dataloader_obj.bess_units_marginal_cost_dfs['Bid_price'].iloc[h].values,
-            dataloader_obj.hydro_ps_units_marginal_cost_dfs['Bid_price'].iloc[h].values,
-            dataloader_obj.ptx_units_df["Demand price"].values,
-            dataloader_obj.dh_units_df["demand_price"].values
+            # dataloader_obj.bess_units_marginal_cost_dfs['Bid_price'].iloc[h].values,
+            # dataloader_obj.hydro_ps_units_marginal_cost_dfs['Bid_price'].iloc[h].values,
+            # dataloader_obj.ptx_units_df["Demand price"].values,
+            # dataloader_obj.dh_units_df["demand_price"].values
+            dataloader_obj.agg_bess.bid_price_weighted.values,
+            dataloader_obj.agg_phs.bid_price_weighted.values,
+            dataloader_obj.agg_ptx.bid_price_weighted.values,
+            dataloader_obj.agg_dh.bid_price_weighted.values
         ])
     ])
 
@@ -476,11 +486,15 @@ def get_unsorted_aggregated_market_curves_from_dataloader_object(example_hour, d
             dataloader_obj.wind_offshore_production.sum(axis=1).iloc[h],
             dataloader_obj.hydro_ror_production.sum(axis=1).iloc[h],
         # Dispatchable
-            dataloader_obj.conventional_units_df.capacity_el.values,
-            dataloader_obj.hydro_res_units.capacity_el.values,
+            # dataloader_obj.conventional_units_df.capacity_el.values,
+            # dataloader_obj.hydro_res_units.capacity_el.values,
+            dataloader_obj.agg_g.capacity_el.values,
+            dataloader_obj.agg_hres.capacity_el.values,
         # Storages
-            dataloader_obj.bess_units_df.capacity_el.values,
-            dataloader_obj.hydro_ps_units.capacity_el.values
+            # dataloader_obj.bess_units_df.capacity_el.values,
+            # dataloader_obj.hydro_ps_units.capacity_el.values
+            dataloader_obj.agg_bess.capacity_el.values,
+            dataloader_obj.agg_phs.capacity_el.values,
         ])
         ,
         # 2nd column is the offer price (marginal cost)
@@ -491,11 +505,15 @@ def get_unsorted_aggregated_market_curves_from_dataloader_object(example_hour, d
             dataloader_obj.wind_offshore_bid_price,
             dataloader_obj.hydro_ror_bid_price,
         # Dispatchable
-            dataloader_obj.conventional_units_df.prodcost.values,
-            dataloader_obj.hydro_res_units.prodcost.values,
+            # dataloader_obj.conventional_units_df.prodcost.values,
+            # dataloader_obj.hydro_res_units.prodcost.values,
+            dataloader_obj.agg_g.prodcost_weighted.values,
+            dataloader_obj.agg_hres.prodcost_weighted.values,
         # Storages
-            dataloader_obj.bess_units_marginal_cost_dfs['Offer_price'].iloc[h].values,
-            dataloader_obj.hydro_ps_units_marginal_cost_dfs['Offer_price'].iloc[h].values
+            # dataloader_obj.bess_units_marginal_cost_dfs['Offer_price'].iloc[h].values,
+            # dataloader_obj.hydro_ps_units_marginal_cost_dfs['Offer_price'].iloc[h].values
+            dataloader_obj.agg_bess.offer_price_weighted.values,
+            dataloader_obj.agg_phs.offer_price_weighted.values,
         ])
     ])
 
@@ -531,6 +549,45 @@ def load_plot_config(palette):
     # Set palette for easier and consistent plotting
     sns.set_palette(palette)  # seaborn
     plt.rcParams['axes.prop_cycle'] = plt.cycler(color=palette)  # matplotlib.pyplot
+
+
+def agg_by_zone_tech(df, prodcost="prodcost", power="capacity_el", tech="fuel", output="prodcost_weighted"):
+    '''
+    Aggregates power capacity and production costs for a participant type by fuel/technology/product type and zone.
+    '''
+    df_agg = df.groupby(["zone_el", tech]).agg(
+        capacity_el=(power, "sum"),
+        pcw=(prodcost, lambda x: (x * df[power]).sum())
+    )
+    df_agg[output] = df_agg.pcw / df_agg.capacity_el
+
+    return df_agg
+
+def agg_storage_by_zone(df, bid_price="Pumped_cons", offer_price="Pumped_prod", power="capacity_el", storage_cap="Storage_Capacity"):
+    '''
+    Aggregated power capacity and production costs for a storage type by fuel/technology/product type and zone.
+    '''
+    df_agg = df.groupby("zone_el").agg(
+        capacity_el=(power, "sum"),
+        capacity_stor=(storage_cap, "sum"),
+        bpw=(bid_price, lambda x: (x * df[power]).sum()),
+        opw=(offer_price, lambda x: (x * df[power]).sum())
+    )
+    df_agg["bid_price_weighted"] = df_agg.bpw / df_agg.capacity_el
+    df_agg["offer_price_weighted"] = df_agg.opw / df_agg.capacity_el
+
+    return df_agg
+
+def set_agg_idx(df):
+    '''
+    Combine the zone and fuel type to a single index
+    '''
+    df_agg = df.copy()
+    idx_col = df_agg.index.map(" ".join)  # e.g. to "FR Nuclear"
+    df_agg = df_agg.reset_index()  # keep bidding zone and fuel type and columns
+    df_agg.index = idx_col  # set the new index
+
+    return df_agg
 
 #### OBSOLETE FUNCTIONS - DO NOT CONSIDER ####
 
