@@ -454,6 +454,7 @@ class PPA_modeling:
         p_DA_ext = np.append(self.p_DA[:, 0].solution, self.p_DA.sol.sel(T=self.T-1))
         y_charge_ext = np.append(self.y_charge[:, 0].solution, self.y_charge.sol.sel(T=self.T-1))
         # Following is used to separate the power delivered in the PPA from the battery in hour t from the power delivered AND generated in hour t.
+        # In hours of power deficit: p_DA - v_min = batt_DA. So then -(batt_DA-batt_dch) = batt_PPA.
         batt_component_of_PPA_delivery = [-(self.p_DA.sol.sel(T=t) - self.y_dch.sol.sel(T=t) - min(self.V_BL, self.v_min.sol.sel(T=t))).item() if (self.y_dch.sol.sel(T=t) > 0 and self.power_deficit[t] == 1) else 0 for t in range(self.T)]
         batt_component_of_PPA_delivery_ext = np.append(batt_component_of_PPA_delivery, batt_component_of_PPA_delivery[-1])
         v_min_excl_batt_ext = v_min_ext-batt_component_of_PPA_delivery_ext
@@ -480,7 +481,7 @@ class PPA_modeling:
 
         # shade hours of negative DA prices
         mask_ext, times_ext_new = make_negative_DA_price_mask(self.times, self.lambda_DA)
-        axs[axs_idx].fill_between(times_ext_new, 0, np.max(self.p_DA.sol + self.y_charge.sol), where=mask_ext, hatch="/", facecolor=self.palette[-1], edgecolor=self.palette[-1], alpha=.1, label=r"$\lambda^{DA} < 0$", zorder=0)
+        axs[axs_idx].fill_between(times_ext_new, 0, np.max(self.p_DA.sol + self.y_charge.sol), where=mask_ext, hatch="/", facecolor=self.palette[-1], edgecolor=self.palette[-1], alpha=.1, label=r"$\lambda^{DA}_t < 0$", zorder=0)
         
         # title and xlabel
         # PPAcov2 = 100 * self.v_min.sol.sum(dim='T').item() / (self.V_BL*self.T) # doesn't work for the "current" settlement mechanism
@@ -502,7 +503,7 @@ class PPA_modeling:
         lambda_DA_ext = np.append(self.lambda_DA, self.lambda_DA[-1])
         lambda_max_ext = np.append(self.lambda_max, self.lambda_max[-1])
         axs[axs_idx].axhline(self.lambda_PPA, linestyle='-', c='k', label=r'$\lambda^{PPA}$')
-        axs[axs_idx].step(times_ext, lambda_DA_ext, where='post', label=r'$\lambda^{DA}$', ls='--')
+        axs[axs_idx].step(times_ext, lambda_DA_ext, where='post', label=r'$\lambda^{DA}_t$', ls='--')
         axs[axs_idx].step(times_ext, lambda_max_ext, where='post', label=r'$\lambda^{max}$', ls='--')
         # title and xlabel
         axs[axs_idx].set_title('Market & PPA Prices\n[€/MWh]', loc='left')
@@ -571,12 +572,12 @@ class PPA_modeling:
         # # skip the PPA color
         # axs[axs_idx].fill_between(times_ext, 0, 0, step='post', alpha=.8)#, label='PPA')
         # actual plot
-        axs[axs_idx].fill_between(times_ext, 0, p_DA_negp_ext, step='post', alpha=.8,label=r'DA $\left(\lambda^{DA} < 0\right)$')
+        axs[axs_idx].fill_between(times_ext, 0, p_DA_negp_ext, step='post', alpha=.8,label=r'DA $\left(\text{where}\;\lambda^{DA}_t < 0\right)$')
         axs[axs_idx].fill_between(times_ext, p_DA_negp_ext, p_DA_ext, step='post', alpha=.8,label='DA')
 
         # shade hours of negative DA prices
         mask_ext, times_ext_new = make_negative_DA_price_mask(self.times, self.lambda_DA)
-        axs[axs_idx].fill_between(times_ext_new, 0, np.max(self.p_DA.sol), where=mask_ext, hatch="/", facecolor=self.palette[-1], edgecolor=self.palette[-1], alpha=.1, label=r"$\lambda^{DA} < 0$", zorder=0)
+        axs[axs_idx].fill_between(times_ext_new, 0, np.max(self.p_DA.sol), where=mask_ext, hatch="/", facecolor=self.palette[-1], edgecolor=self.palette[-1], alpha=.1, label=r"$\lambda^{DA}_t < 0$", zorder=0)
         
         # title and xlabel
         if presentation:
@@ -594,8 +595,8 @@ class PPA_modeling:
         lambda_DA_ext = np.append(self.lambda_DA, self.lambda_DA[-1])
         lambda_sum_ext = lambda_DA_ext + self.lambda_PPA
         axs[axs_idx].axhline(self.lambda_PPA, linestyle='-', c='k', label=r'$\lambda^{PPA}$')
-        axs[axs_idx].step(times_ext, lambda_DA_ext, where='post', label=r'$\lambda^{DA}$', ls='--')
-        axs[axs_idx].step(times_ext, lambda_sum_ext, where='post', label=r'$\lambda^{DA}+\lambda^{PPA}$', ls='--')
+        axs[axs_idx].step(times_ext, lambda_DA_ext, where='post', label=r'$\lambda^{DA}_t$', ls='--')
+        axs[axs_idx].step(times_ext, lambda_sum_ext, where='post', label=r'$\lambda^{DA}_t+\lambda^{PPA}$', ls='--')
         # title and xlabel
         axs[axs_idx].set_title('Market & PPA Prices\n[€/MWh]', loc='left')
         axs[axs_idx].set_xlabel('Time')
@@ -621,7 +622,7 @@ if __name__ == "__main__":
     # In the list below the first C-BL is vanilla and the 2nd will include a further constraint.
     profile_types_BL = ['BL', 'BL–COMPLIANCE', 'C-BL', 'C-BL–RESTRICTED_CHARGING', 'AC-BL', 'AC-BL–RESTRICTED_CHARGING']
 
-    settlements = profile_types_BL
+    settlements = profile_types_PaX
 
     models_dict = {}
     for p_ in settlements:
@@ -632,7 +633,7 @@ if __name__ == "__main__":
                 PPA_profile=p,
                 BL_enforce_no_charge_in_deficit=(True if p_.endswith('–RESTRICTED_CHARGING') else False),
                 BL_annual_compliance_percentage=(True if p_.endswith('–COMPLIANCE') else False),
-                BL_compliance_perc=0.55,
+                BL_compliance_perc=0.612,
                 add_batt=(True if p in ['BL', 'C-BL', 'AC-BL'] else False)
             )
 
