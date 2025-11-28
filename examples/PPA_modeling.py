@@ -83,40 +83,55 @@ def make_negative_DA_price_mask(times, lambda_DA):
 
     return mask_ext, times_ext
 
+def remove_mult_suffix(string: str, suffixes: list):
+    '''
+    Removes multiple types of suffixes to allow for simple naming
+    conventions of PPA types while maintaining a versatile class.
+    '''
+    for s in suffixes:
+        string = string.removesuffix(s)
+    return string
+
 class PPA_modeling:
     '''
     This class is used to model the behaviour of a profit-maximizing
     developer who has entered a PPA.
 
-    By setting the PPA_profile to either 'BL' or 'PaP' the class can be used
-    to investigate the behaviour of a developer under both types of PPA profiles.
-    The net settlement of a physical and virtual PPA are identical, so this class
-    can be used to investigate both types of PPA structures as well.
-
-    It is possible to choose between two objective functions:
-        - "Financial" which is a normal/current BL meaning that
-        the objective function is identical to a developer with no PPA,
-        since her PPA payment is independent of her power delivery.
-            - This objective function comes with the opportunity of specifying
-            a required level of PPA coverage to avoid very low coverage.
-        - "Coupled" which is a new BL settlement mechanism where the PPA
-        payment depends on the power delivery. Thus, the PPA-DA price margin
-        is not received for the power deficit.
-            - This objective function allows for two additional constraints:
+    This class allows for analyzing multiple types of PPAs. Specifically:
+    - Pay-as-Forecasted: PaF, where the PPA payment to the Producer is based
+        solely on the (hourly) power forecast.
+    - Pay-as-Produced: PaP, where the PPA payment is based on the accepted DA
+        offer, p_DA, which is used as a proxy for the realized/real-time (RT) production.
+        In this case the VRE producer is assumed to:
+            1. have a perfect forecast, and
+            2. to not participate in down-regulation in the balancing market.
+        Ultimately, these two assumptions allow the simplication that: p_DA = p_RT.
+    - Baseload: BL, where the PPA payment is based on an hourly, constant volume, V_BL.
+    - Coupled BL: C-BL, where the PPA payment is based on the minimum, v_min, of p_DA and V_BL
+        So, deficit power is not settled at the PPA price.
+    - Asymmetric coupled BL: AC-BL, where the PPA is still settled in hours of power deficit,
+        but only if it favors the Buyer as the Producer should not be rewarded for not complying.
+    
+    Additional constraints:
+        - For C-BL and AC-BL there are two additional constraints that can be added. Both restric battery usage:
             1) Disallowing charging in deficit hours
             2) Disallowing offering more than V_BL in deficit hours
-            Both restrict the usage of the battery.
+        - For the BL profiles it is also possible to set a required compliance rate. If none, set it to 0.
+
+    The net settlement of a physical and virtual PPA are identical in most cases (PaP, BL, C-BL, AC-BL), so this class
+    can be used to investigate both types of PPA structures as well. In a PaF the two structures are also identical given
+    some simple assumptions:
+        1. If the offer is accepted in full in DA, or
+        2. If the maximum PPA payment is the PPA price, i.e. the price difference is not settled in full in hours of negative prices.
     '''
 
     # Prepare model inputs
     def __init__(self,
         # no additional constraints: 998.6 €, PPA cov. 66.6%
-        PPA_profile : str,  # the PPA electricity profile.
-        PaP_coupled : bool = False,  # changes the ¡PaP! OBJECTIVE
-        financial_settlement : bool = False,  # changes the ¡BL! OBJECTIVE. Decoupled or coupled.
-        enforce_no_charge_in_deficit : bool = False,  # changes the ¡BL! CONSTRAINTS. Restricts a coupled PPA.
-        annual_compliance_percentage : bool = False,  # changes the ¡BL! CONSTRAINTS. Restrics a DEcoupled PPA.
-        compliance_perc : float = 0.5,
+        PPA_profile : str,  # the PPA electricity profile: no_PPA, PaF, PaP, BL, C-BL, or AC-BL --> primarily affects the OBJ
+        BL_enforce_no_charge_in_deficit : bool = False,  # changes the ¡BL! CONSTRAINTS. Restricts a coupled PPA.
+        BL_annual_compliance_percentage : bool = False,  # changes the ¡BL! CONSTRAINTS. Restrics a DEcoupled PPA.
+        BL_compliance_perc : float = 0.5,
         add_batt : bool = True,
     ) -> None:
 
@@ -124,37 +139,29 @@ class PPA_modeling:
         self.PPA_profile = PPA_profile    
 
         # Let all bools that are not relevant for the chosen profile remain FALSE as given in the default statement.
-        self.financial_settlement = financial_settlement
-        self.enforce_no_charge_in_deficit = enforce_no_charge_in_deficit
-        self.annual_compliance_percentage = annual_compliance_percentage
+        self.BL_enforce_no_charge_in_deficit = BL_enforce_no_charge_in_deficit
+        self.BL_annual_compliance_percentage = BL_annual_compliance_percentage
 
-        # A financial settlement should not include any forced behaviour on an hourly basis.
-        if self.financial_settlement and self.enforce_no_charge_in_deficit:
-            raise Exception("It makes no conceptual sense to enforce any kind of offering behaviour in deficit hours if the settlement is financial since a financial settlement by definition decouples delivery and PPA payment. Thus deficit do not exist.")
+        # # A financial settlement should not include any forced behaviour on an hourly basis.
+        # if self.financial_settlement and self.BL_enforce_no_charge_in_deficit:
+        #     raise Exception("It makes no conceptual sense to enforce any kind of offering behaviour in deficit hours if the settlement is financial since a financial settlement by definition decouples delivery and PPA payment. Thus deficit do not exist.")
 
-        # A coupled settlement should not include any forced behaviour on an annual basis.
-        if not self.financial_settlement and self.annual_compliance_percentage:
-            raise Exception("The settlement is already coupled on an hourly basis. A yearly coupling would only make sense for a decoupled settlement.")
+        # # A coupled settlement should not include any forced behaviour on an annual basis.
+        # if not self.financial_settlement and self.BL_annual_compliance_percentage:
+        #     raise Exception("The settlement is already coupled on an hourly basis. A yearly coupling would only make sense for a decoupled settlement.")
 
-        self.compliance_perc = compliance_perc
+        self.BL_compliance_perc = BL_compliance_perc
         self.add_batt = add_batt
-        
-        self.PaP_coupled = PaP_coupled
+        self.BL = (True if (PPA_profile == 'BL' or PPA_profile == 'C-BL' or PPA_profile == 'AC-BL') else False)
+        if not self.add_batt:
+            # There's a high likelihood of infeasibilities if inclyding a minimum compliance without a battery.
+            #   And the other constraint is meaningless without a battery.
+            self.BL_annual_compliance_percentage = False
+            self.BL_enforce_no_charge_in_deficit = False
 
-        if self.PPA_profile == 'BL':
-            # Overwrite any PaP bools that have mistakenly been set to True to False.
-            self.PaP_coupled = False
-
-        elif self.PPA_profile == 'PaP':
-            # Overwrite any BL bools that have mistakenly been set to True to False.
-            self.financial_settlement = False
-            self.enforce_no_charge_in_deficit = False
-            self.annual_compliance_percentage = False
-
-            # It does not make sense to get a PaP for a hybrid BESS power plant.
-            self.add_batt = False
-        else:
-            raise Exception(f"{self.PPA_profile} is not a valid PPA electricity profile. Please try baseload ('BL') or Pay-as-Produced ('PaP')")
+        valid_PPA_profiles = ['no_PPA', 'PaF', 'PaP', 'BL', 'C-BL', 'AC-BL']
+        if not (self.PPA_profile in valid_PPA_profiles):
+            raise Exception(f"{self.PPA_profile} is not a valid PPA electricity profile. Please try a valid PPA profile:\n{valid_PPA_profiles}")
 
         # Immediately run data and model-building methods.
         self.initialize_data()
@@ -164,7 +171,7 @@ class PPA_modeling:
         self.palette = load_plot_configs()
 
     def initialize_data(self) -> None:
-        seed = np.random.seed(42)
+        np.random.seed(42)
         self.T = 24
         dist = 0.5*np.random.weibull(1.5, size=24)
         self.P_fore = dist/np.max(dist)  # normalized forecast between 0 and 1
@@ -202,9 +209,9 @@ class PPA_modeling:
         self.power_deficit = 1 * (self.P_fore < self.V_BL)  # 1: power deficit, 0: power sufficiency/surplus
         
         ### DATA ONLY USED FOR PLOTTING
-        # If it's a financial settlement, then the developer can't be in a deficit.
+        # If there's no PPA, it's a PaF or a PaP HERE financial settlement, then the developer can't be in a deficit.
         # This is relevant only for plotting.
-        if self.financial_settlement:
+        if (self.PPA_profile in ['no_PPA', 'PaF', 'PaP']):
             self.power_deficit = 0 * self.power_deficit
 
         # compute time step (assuming hourly or regular intervals)
@@ -228,7 +235,7 @@ class PPA_modeling:
         #   have to meet a certain volume (V_BL for BL) so v_min is not needed. Further,
         #   it does not make sense to use a BESS for a VRE plant with a PaP PPA, since the
         #   value of the power is constant across all hours.
-        if self.PPA_profile == 'BL':
+        if self.BL:
             # v_min: The first V_BL of p_DA in hour t.
             self.v_min = self.model.add_variables(  # part of y_dch is implicit in this
                 lower=0,
@@ -257,7 +264,7 @@ class PPA_modeling:
                 dims=["T","Z"],
                 name="y_dch")
 
-    def build_constrs(self) -> None:
+    def build_batt_constrs(self) -> None:
         # 1 Power balance
         self.pow_bal = self.model.add_constraints(
             self.p_DA + self.y_charge <= self.y_dch + self.P_fore,
@@ -283,60 +290,90 @@ class PPA_modeling:
             name="v_min__p_DA"
         )
 
-        if self.enforce_no_charge_in_deficit:
-            # 5 The developer is NOT free to charge the battery is she is not compliant in a given hour.
-            self.PPA_first = self.model.add_constraints(
-                self.v_min >= (self.V_BL * (1-self.power_deficit) + self.P_fore * self.power_deficit),
-                name="PPA_first"
-            )
+    def build_BL_constrs(self) -> None:
+        # This constraint is only sensical for C-BL or AC-BL
+        if not self.PPA_profile == 'BL':
+            if self.BL_enforce_no_charge_in_deficit:
+                # 5 The developer is NOT free to charge the battery is she is not compliant in a given hour.
+                self.PPA_first = self.model.add_constraints(
+                    self.v_min >= (self.V_BL * (1-self.power_deficit) + self.P_fore * self.power_deficit),
+                    name="PPA_first"
+                )
 
-        # if self.enforce_no_DA_in_deficit:
-        #     # 6 Can only offer in DA market if there is a power surplus
-        #     self.no_DA_def = self.model.add_constraints(
-        #         # p_DA + y_dch_DA <= np.maximum(P_fore - V_BL, 0),
-        #         self.p_DA - self.v_min <= np.maximum(self.P_fore - self.V_BL, 0),
-        #         name="Power forecast, DA")
-
-        if self.annual_compliance_percentage:
+        # The compliance rate constraint is applicable to all BL contracts, though
+        #   it is unclear why it would be implemented in C-BL or AC-BL in reality.
+        if self.BL_annual_compliance_percentage:
             # 7 Ensure that the developer is only free to participate in the DA market if there is an abundance of power
             self.model.add_constraints(
                 self.v_min.sum("T")
                 >=
-                min(sum(self.P_fore), self.T*self.V_BL) * self.compliance_perc,
-                name="Restrict DA participation"
+                min(sum(self.P_fore), self.T*self.V_BL) * self.BL_compliance_perc,
+                name="BL_compliance"
             )
 
     def build_obj(self) -> None:
-        # decoupled settlement. BL & PaP:
-        if self.financial_settlement or (self.PPA_profile == 'PaP' and not self.PaP_coupled):
+        # PaF or no PPA:
+        if self.PPA_profile in ['no_PPA', 'PaF']:
+            '''
+            The objective function in a PaF is: P_fore * lambda_PPA. So in a PaF the Producer is indifferent
+                to her offering price. We assume a offer price of 0. In which case the PaF objective function
+                is identical to pure arbitrage:
+            '''
             self.model.add_objective(
-                        # No PPA term because the obj is independent of it since there's no coupling
-                        (self.p_DA * self.lambda_DA).sum(dim="T"),
+                        (self.p_DA * self.lambda_DA).sum(dim="T"),  # -> offers @ 0 €/MWh
+                        # if self.PPA_profile == PaF
+                        #   + P_fore * lambda_PPA 
                         sense='max'
+
             )
-        # PaP coupled:
-        elif self.PaP_coupled:  # and consequently also self.PPA_profile == 'PaP'
+        # PaP:
+        elif self.PPA_profile == 'PaP':
             self.model.add_objective(
-                (self.p_DA * (self.lambda_DA + self.lambda_PPA)).sum(dim="T"),
+                (self.p_DA * self.lambda_PPA).sum(dim="T"),  # -> offers @ -inf €/MWh if unrestrictedly settling price difference.
                 sense='max'
             )
-        # BL coupled:
-        else:
+        # BL:
+        elif self.PPA_profile == 'BL':
+            # V_BL * lambda_PPA + (p_DA - V_BL) * lambda_DA
+            # V_BL * (lambda_PPA - lambda_DA) is constant...
+            self.model.add_objective(
+                (self.p_DA * self.lambda_DA).sum(dim="T"),  # -> offers @ 0 €/MWh
+                sense='max'
+            )
+        # Coupled BL:
+        elif self.PPA_profile == 'C-BL':
+            # v_min * lambda_PPA + (p_DA - v_min) * lambda_DA
+            # = p_DA * lambda_DA + v_min * (lambda_PPA - lambda_DA)
+            self.model.add_objective(
+                (self.p_DA * self.lambda_DA
+                + self.v_min * (self.lambda_PPA - self.lambda_DA + self.xi)  # xi pushes v_min to max in hours where lambda_PPA = lambda_DA.
+                ).sum(dim="T"),  # -> offers V_BL @ -inf €/MWh, surplus @ 0 €/MWh
+                sense='max'
+            )
+        # Asymmetric Coupled BL:
+        elif self.PPA_profile == 'AC-BL':
+            # v_min * lambda_PPA + (p_DA - v_min) * lambda_DA - (V_BL - v_min) * (lambda_max - lambda_PPA)
+            # = p_DA * lambda_DA + v_min * (lambda_PPA - lambda_DA) + v_min * (lambda_max - lambda_PPA) - V_BL * (lambda_max - lambda_PPA)
+            # = p_DA * lambda_DA + v_min * (lambda_max - lambda_DA) - constant
             self.model.add_objective(
                 (self.p_DA * self.lambda_DA
                 + self.v_min * (self.lambda_max - self.lambda_DA + self.xi)
-                ).sum(dim="T"),
+                ).sum(dim="T"),  # -> offers V_BL @ -inf €/MWh, surplus @ 0 €/MWh
                 sense='max'
             )
+        else:  # -> redundant :/
+            raise Exception(f"No such PPA profile: {self.PPA_profile}")
 
     def build_model(self) -> None:
         self.model = linopy.Model()
         self.build_vars()
 
-        # The only constraint needed in a PaP is the power forecast as
-        #   an upper limit to the power offered in the DA market.
-        if self.PPA_profile == 'BL':
-            self.build_constrs()
+        # Build battery and/or the additional BL constraints.
+        if self.add_batt:
+            self.build_batt_constrs()
+
+        if self.BL:
+            self.build_BL_constrs()
 
         self.build_obj()
         print("Done building model")
@@ -345,6 +382,62 @@ class PPA_modeling:
     def run_model(self) -> None:
         self.model.solve(solver_name='gurobi')
 
+    # Calculate producer revenues when accounting for constant terms in PPAs
+    def calculating_net_revenues(self) -> None:
+
+        self.PPA_producer_constant = 0  # [€], used to account for constant terms in objective functions not allowed in Linopy.
+        self.producer_net_rev = 0  # [€], total DA + PPA profit.
+        self.PPA_producer_prof = 0  # [€], the total net profit resulting from the PPA. Including any OBJ and constant terms
+
+        # no PPA
+        if self.PPA_profile == 'no_PPA':
+            self.PPA_producer_constant = 0
+            self.producer_net_rev = self.model.objective.value
+            self.PPA_producer_prof = 0
+
+        # PaF:
+        elif self.PPA_profile == 'PaF':
+            self.PPA_producer_constant = (self.P_fore * self.lambda_PPA).sum()
+            self.producer_net_rev = self.PPA_producer_constant  # in the PaF the producer does not receive any DA earnings. She earns the PPA price for each MWh forecasted.
+            self.PPA_producer_prof = self.PPA_producer_constant
+
+        # PaP:
+        elif self.PPA_profile == 'PaP':
+            self.PPA_producer_prof = self.model.objective.value
+            self.producer_net_rev = self.model.objective.value
+
+        # BL:
+        elif self.PPA_profile == 'BL':
+            # V_BL * lambda_PPA + (p_DA - V_BL) * lambda_DA
+            # V_BL * (lambda_PPA - lambda_DA) is constant...
+            self.PPA_producer_constant = (self.V_BL * (self.lambda_PPA - self.lambda_DA)).sum()
+            self.producer_net_rev = self.model.objective.value + self.PPA_producer_constant
+            self.PPA_producer_prof = self.PPA_producer_constant
+
+        # Coupled BL:
+        elif self.PPA_profile == 'C-BL':
+            # v_min * lambda_PPA + (p_DA - v_min) * lambda_DA
+            # = p_DA * lambda_DA + v_min * (lambda_PPA - lambda_DA)
+            self.producer_net_rev = self.model.objective.value - (self.v_min.solution.to_numpy() * self.xi).sum()  # PPA prof already included in OBJ
+            self.PPA_producer_prof = (self.v_min.solution.to_numpy() * (self.lambda_PPA - self.lambda_DA)).sum()
+            self.PPA_producer_constant = 0
+
+        # Asymmetric Coupled BL:
+        elif self.PPA_profile == 'AC-BL':
+            # v_min * lambda_PPA + (p_DA - v_min) * lambda_DA - (V_BL - v_min) * (lambda_max - lambda_PPA)
+            # = p_DA * lambda_DA + v_min * (lambda_PPA - lambda_DA) + v_min * (lambda_max - lambda_PPA) - V_BL * (lambda_max - lambda_PPA)
+            # = p_DA * lambda_DA + v_min * (lambda_max - lambda_DA) - constant
+            self.PPA_producer_constant = - (self.V_BL * (self.lambda_max - self.lambda_PPA)).sum()
+            self.producer_net_rev = (
+                self.model.objective.value
+                - (self.v_min.solution.to_numpy() * self.xi).sum()
+                + self.PPA_producer_constant
+            )
+            self.PPA_producer_prof = (self.v_min.solution.to_numpy() * (self.lambda_max - self.lambda_DA)).sum() + self.PPA_producer_constant
+
+        else:  # -> redundant :/
+            raise Exception(f"No such PPA profile: {self.PPA_profile}")
+
     # Visualize BL results
     def plot_BL_power_allocation(self, axs, axs_idx=0, add_to_title=''):
         '''
@@ -352,7 +445,7 @@ class PPA_modeling:
         '''
         times_ext = self.times_ext
 
-        presentation = True
+        presentation = False
 
         # extend data arrays by repeating last value
         P_fore_ext = np.append(self.P_fore, self.P_fore[-1])
@@ -369,14 +462,14 @@ class PPA_modeling:
         axs[axs_idx].step(times_ext, P_fore_ext, where='post', label='P_fore', linestyle='--')
         # axs[0].fill_between(times_ext, 0, v_min_ext, step='post', alpha=0.5, label='PPA')
         # Instead of the code right above, don't plot the batt. dch. part of the PPA delivery
-        if not self.financial_settlement:
-            axs[axs_idx].fill_between(times_ext, 0, v_min_excl_batt_ext, step='post', alpha=.8, label='PPA')
-            axs[axs_idx].fill_between(times_ext, v_min_excl_batt_ext, p_DA_ext - y_dch_ext, step='post', alpha=.8,label='DA')
+        if not self.PPA_profile == 'BL':
+            axs[axs_idx].fill_between(times_ext, 0, v_min_excl_batt_ext, step='post', alpha=.8, label=r'DA dispatch, paid @ $\lambda^{PPA}$')
+            axs[axs_idx].fill_between(times_ext, v_min_excl_batt_ext, p_DA_ext - y_dch_ext, step='post', alpha=.8,label=r'DA dispatch, paid @ $\lambda^{DA}_t$')
         else:
             # skip the PPA color
-            axs[axs_idx].fill_between(times_ext, 0, 0, step='post', alpha=.8, label='PPA')
+            axs[axs_idx].fill_between(times_ext, 0, 0, step='post', alpha=.8, label=r'DA dispatch, paid @ $\lambda^{PPA}$')
             # actual plot
-            axs[axs_idx].fill_between(times_ext, 0, p_DA_ext - y_dch_ext, step='post', alpha=.8,label='DA')
+            axs[axs_idx].fill_between(times_ext, 0, p_DA_ext - y_dch_ext, step='post', alpha=.8,label=r'DA dispatch, paid @ $\lambda^{DA}_t$')
         axs[axs_idx].fill_between(times_ext, p_DA_ext - y_dch_ext,
                         p_DA_ext, step='post', alpha=.8, label='Batt. discharge')
         axs[axs_idx].fill_between(times_ext, p_DA_ext,
@@ -392,20 +485,12 @@ class PPA_modeling:
         # title and xlabel
         # PPAcov2 = 100 * self.v_min.sol.sum(dim='T').item() / (self.V_BL*self.T) # doesn't work for the "current" settlement mechanism
         PPA_coverage = 100 * np.minimum(self.V_BL, self.p_DA.sol).sum(dim="T").item() / (self.V_BL*self.T)
-        obj = self.model.objective.value
-        DA_revs = (self.p_DA.sol * self.lambda_DA).sum()
-        if not self.financial_settlement:
-            PPA_revs = (self.v_min.sol * (self.lambda_max - self.lambda_DA)).sum().item()
-            PPA_revs_corr = PPA_revs - (self.V_BL * (self.lambda_max - self.lambda_PPA)).sum()
-            obj_corr = DA_revs + PPA_revs_corr
-        else:
-            PPA_revs = 0  # by definition. However, v_min is positive in "current_compliance" because it's used to count the compliant MWh...
-            PPA_revs_corr = PPA_revs + (self.V_BL * (self.lambda_PPA - self.lambda_DA)).sum()
-            obj_corr = DA_revs + PPA_revs_corr
+
         if presentation:
-            axs[axs_idx].set_title(f'{add_to_title}\n\t PPA coverage: {PPA_coverage:.1f}% \n\t Developer revenues: €{obj_corr:.1f} - of which DA/PPA: €{DA_revs:.1f}/€{PPA_revs_corr:.1f})\n[MW]', loc='left')
+            axs[axs_idx].set_title(f'{add_to_title}\n\t PPA coverage: {PPA_coverage:.1f}% \n\t Developer revenues: €{self.producer_net_rev:.1f} - of which DA/PPA: €{self.producer_net_rev-self.PPA_producer_prof:.1f}/€{self.PPA_producer_prof:.1f})\n[MW]', loc='left')
         else:
-            axs[axs_idx].set_title(f'{add_to_title}Power allocation (PPA BL-coverage: {PPA_coverage:.1f}%)\nobj: €{obj:.1f} - of which DA/PPA: €{DA_revs:.1f}/€{PPA_revs:.1f})\nobj: €{obj_corr:.1f} - of which DA/PPA: €{DA_revs:.1f}/€{PPA_revs_corr:.1f})\n[MW]', loc='left')
+            # axs[axs_idx].set_title(f'{add_to_title}Power allocation (PPA BL-coverage: {PPA_coverage:.1f}%)\nobj: €{self.model.objective.value:.1f}\nobj: €{self.producer_net_rev:.1f} - of which DA/PPA/constant: €{self.producer_net_rev-self.PPA_producer_prof:.1f}/€{self.PPA_producer_prof:.1f}/€{self.PPA_producer_constant:.1f})\n[MW]', loc='left')
+            axs[axs_idx].set_title(f'{add_to_title}Power allocation (PPA BL-coverage: {PPA_coverage:.1f}%)\nobj: €{self.model.objective.value:.1f}\nobj: €{self.producer_net_rev:.1f} - of which DA/PPA_obj/PPA_const: €{self.producer_net_rev-self.PPA_producer_prof:.1f}/€{self.PPA_producer_prof:.1f}/€{self.PPA_producer_constant:.1f})\n[MW]', loc='left')
         axs[axs_idx].set_xlabel('Time')
 
         return axs
@@ -442,6 +527,8 @@ class PPA_modeling:
 
     def plot_BL_results(self) -> None:
         '''
+        Relevant for BL, C-BL, and AC-BL.
+        
         This method plots the:
         1) Power allocation
         2) Prices
@@ -453,7 +540,7 @@ class PPA_modeling:
 
         axs = unify_palette_cyclers(axs)
 
-        axs = self.plot_power_allocation(axs)
+        axs = self.plot_BL_power_allocation(axs)
         axs = self.plot_prices_max(axs)
         axs = self.plot_battery_operations(axs)
         print(axs, type(axs))
@@ -461,14 +548,14 @@ class PPA_modeling:
 
         plt.show()
 
-    # Visualize PaP results
+    # Visualize results
     def plot_PaP_power(self, axs, axs_idx, add_to_title=''):
         '''
-        plot power production under PaP
+        plot power production under no PPA, Paf, and PaP.
         '''
         times_ext = self.times_ext
 
-        presentation = True
+        presentation = False
 
         # DA offers in negative price hours
         # extend data arrays by repeating last value
@@ -492,21 +579,10 @@ class PPA_modeling:
         axs[axs_idx].fill_between(times_ext_new, 0, np.max(self.p_DA.sol), where=mask_ext, hatch="/", facecolor=self.palette[-1], edgecolor=self.palette[-1], alpha=.1, label=r"$\lambda^{DA} < 0$", zorder=0)
         
         # title and xlabel
-        obj = self.model.objective.value
-        DA_revs = (self.p_DA.sol * self.lambda_DA).sum()
-        if self.PaP_coupled:
-            PPA_revs = (self.p_DA.sol * self.lambda_PPA).sum().item()
-            PPA_revs_corr = PPA_revs - (self.P_fore * self.lambda_DA.ravel()).sum()
-            obj_corr = DA_revs + PPA_revs_corr
-        else:
-            PPA_revs = 0  # by definition. However, v_min is positive in "current_compliance" because it's used to count the compliant MWh...
-            PPA_revs_corr = PPA_revs + ( self.P_fore * (self.lambda_PPA - self.lambda_DA.ravel()) ).sum()
-            obj_corr = DA_revs + PPA_revs_corr
-        
         if presentation:
-            axs[axs_idx].set_title(f'{add_to_title}\n\t Developer revenues: €{obj_corr:.1f} - of which DA/PPA: €{DA_revs:.1f}/€{PPA_revs_corr:.1f}\n[MW]', loc='left')
+            axs[axs_idx].set_title(f'{add_to_title}\n\t Developer revenues: €{self.producer_net_rev:.1f} - of which DA/PPA: €{self.producer_net_rev-self.PPA_producer_prof:.1f}/€{self.PPA_producer_prof:.1f}\n[MW]', loc='left')
         else:
-            axs[axs_idx].set_title(f'{add_to_title}Power production\nobj: €{obj:.1f} - of which DA/PPA: €{DA_revs:.1f}/€{PPA_revs:.1f}\nobj: €{obj_corr:.1f} - of which DA/PPA: €{DA_revs:.1f}/€{PPA_revs_corr:.1f} (corrected)\n[MW]', loc='left')
+            axs[axs_idx].set_title(f'{add_to_title}Power production\nmodel obj: €{self.model.objective.value:.1f}\ntrue obj: €{self.producer_net_rev:.1f} - of which DA/PPA_obj/PPA_const: €{self.producer_net_rev-self.PPA_producer_prof:.1f}/€{self.PPA_producer_prof:.1f}/€{self.PPA_producer_constant:.1f} (corrected)\n[MW]', loc='left')
         axs[axs_idx].set_xlabel('Time')
 
         return axs
@@ -526,78 +602,66 @@ class PPA_modeling:
 
         return axs
 
-#%% 
-# d = PPA_modeling(PPA_profile='BL',
-#                  PaP_coupled=False,
-#                  financial_settlement=True,
-#                  enforce_no_charge_in_deficit=False,
-#                  annual_compliance_percentage=True,
-#                  compliance_perc=0.9,  # caution: too high a compliance rate may be infeasible
-#                  add_batt=True,
-#     )
+if __name__ == "__main__":
+    # example
+    # d = PPA_modeling(PPA_profile='PaF',
+    #                  BL_enforce_no_charge_in_deficit=False,
+    #                  BL_annual_compliance_percentage=False,
+    #                  BL_compliance_perc=0.0,  # caution: too high a compliance rate may be infeasible
+    #                  add_batt=False,
+    # )
 
-# d.run_model()
+    # d.run_model()
+    # d.calculate_net_revenues()
+    # d.model.objective.value
 
-# d.plot_BL_results()
+    # Solutions:
 
-#%% Solutions:
-BL_settlements = {}
-BL_settlements["current"] = [True, False, False, 0]
-BL_settlements["coupled"] = [False, False, False, 0]
-BL_settlements["coupled_restricted"] = [False, True, False, 0]
-BL_settlements["current_compliance"] = [True, False, True, .612] #.827]
-# BL_settlements["current_compliance2"] = [True, False, True, .827]
- 
-PaP_settlements = {}
-PaP_settlements["current"] = [False]
-PaP_settlements["coupled"] = [True]
+    profile_types_PaX = ['no_PPA', 'PaF', 'PaP']
+    # In the list below the first C-BL is vanilla and the 2nd will include a further constraint.
+    profile_types_BL = ['BL', 'BL–COMPLIANCE', 'C-BL', 'C-BL–RESTRICTED_CHARGING', 'AC-BL', 'AC-BL–RESTRICTED_CHARGING']
 
-profile_type = 'BL'
-settlements =   BL_settlements
+    settlements = profile_types_BL
 
-models_dict = {}
-for i, (k, v) in enumerate(settlements.items()):
-    if profile_type == 'BL':
+    models_dict = {}
+    for p_ in settlements:
+        # Remove any numbering, so e.g. "C-BL_2" is simplified to "C-BL"
+        p = remove_mult_suffix(string=p_, suffixes=['–RESTRICTED_CHARGING','–COMPLIANCE'])
+
         m = PPA_modeling(
-                PPA_profile='BL',
-                financial_settlement=v[0],
-                enforce_no_charge_in_deficit=v[1],
-                annual_compliance_percentage=v[2],
-                compliance_perc=v[3],
+                PPA_profile=p,
+                BL_enforce_no_charge_in_deficit=(True if p_.endswith('–RESTRICTED_CHARGING') else False),
+                BL_annual_compliance_percentage=(True if p_.endswith('–COMPLIANCE') else False),
+                BL_compliance_perc=0.55,
+                add_batt=(True if p in ['BL', 'C-BL', 'AC-BL'] else False)
             )
 
-    elif profile_type == 'PaP':
-        m = PPA_modeling(
-            PPA_profile='PaP',
-            PaP_coupled=v[0]
-        )
+        m.run_model()
+        m.calculating_net_revenues()
+        
+        # Save the model for easier handling and debugging
+        # Change e.g. "C-BL_2" to "C_BL–RESTRICTED" and leave C-BL unchanged.
+        models_dict[p_] = m
 
-    m.run_model()
-    
-    # Save the model for easier handling and debugging
-    models_dict[k] = m
+    #%% Visualize results for different settlements mechanisms
+    # load_plot_configs()
+    fig, axs = plt.subplots(len(settlements)+1, 1, figsize=(10, 8+2*len(settlements)), constrained_layout=True)
+    axs = unify_palette_cyclers(axs)
+    for i, p in enumerate(settlements):
+        # Plot production curves
+        if models_dict[p].BL:
+            axs = models_dict[p].plot_BL_power_allocation(axs, axs_idx=i, add_to_title=f"{p}\n")
+        else:
+            axs = models_dict[p].plot_PaP_power(axs, axs_idx=i, add_to_title=f"{p.replace("_"," ")}\n")
 
-#%% Visualize results for different settlements mechanisms
-# load_plot_configs()
-fig, axs = plt.subplots(len(settlements)+1, 1, figsize=(10, 8+2*len(settlements)), constrained_layout=True)
-axs = unify_palette_cyclers(axs)
-for i, (k, v) in enumerate(settlements.items()):
-    # Plot production curves
-    if profile_type == 'BL':
-        axs = models_dict[k].plot_BL_power_allocation(axs, axs_idx=i, add_to_title=fr"{profile_type} – {k.upper()}")
-    elif profile_type == 'PaP':
-        axs = models_dict[k].plot_PaP_power(axs, axs_idx=i, add_to_title=fr"{profile_type} – {k.upper()}")
+    # Plot price curves
+    if models_dict[p].BL:
+        axs = models_dict[settlements[0]].plot_prices_max(axs, axs_idx=-1)
+    else:
+        axs = models_dict[settlements[0]].plot_prices_sum(axs, axs_idx=-1)
 
-# Plot price curves
-if profile_type == 'BL':
-    axs = models_dict["current"].plot_prices_max(axs, axs_idx=-1)
-elif profile_type == 'PaP':
-    axs = models_dict["current"].plot_prices_sum(axs, axs_idx=-1)
+    axs = prettify_subplots(axs)
 
-axs = prettify_subplots(axs)
-
-plt.show()
-# %%
-d = models_dict["current"]
-
-# %%
+    plt.show()
+    # %%
+    d = models_dict[settlements[0]]
