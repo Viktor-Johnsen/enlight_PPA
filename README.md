@@ -1,4 +1,4 @@
-# ENLIGHT
+# ENLIGHT_PPA
 
 European Network for Long-term Insights on Grid prices, Hedging & Trends
 
