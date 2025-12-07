@@ -39,35 +39,59 @@ def load_csv_if_exists(path: Path) -> pd.DataFrame:
         raise ValueError(f"File {path} is empty.")
     return df
 
-def setup_logging(log_dir: str = "logs", log_file: str = "enlight.log") -> logging.Logger:
-    """
-    Configure logging, create log folder if it doesn't exist, and return a logger.
+# def setup_logging(log_dir: str = "logs", log_file: str = "enlight.log") -> logging.Logger:
+#     """
+#     Configure logging, create log folder if it doesn't exist, and return a logger.
 
-    Args:
-        log_dir (str): Folder to store log files (default "logs").
-        log_file (str): Log file name (default "app.log").
+#     Args:
+#         log_dir (str): Folder to store log files (default "logs").
+#         log_file (str): Log file name (default "app.log").
 
-    Returns:
-        logging.Logger: Configured logger.
-    """
-    # Ensure the logs folder exists
+#     Returns:
+#         logging.Logger: Configured logger.
+#     """
+#     # Ensure the logs folder exists
+#     log_path = Path(log_dir)
+#     log_path.mkdir(parents=True, exist_ok=True)
+
+#     # Full path for the log file
+#     file_path = log_path / log_file
+
+#     # Configure logging
+#     logging.basicConfig(
+#         level=logging.INFO,
+#         format='%(asctime)s - %(levelname)s - %(message)s',
+#         handlers=[
+#             logging.StreamHandler(),        # Console output
+#             logging.FileHandler(file_path)  # File output
+#         ]
+#     )
+
+#     return logging.getLogger(__name__)
+
+def setup_logging(log_dir="logs", log_file="enlight.log") -> logging.Logger:
     log_path = Path(log_dir)
     log_path.mkdir(parents=True, exist_ok=True)
-
-    # Full path for the log file
     file_path = log_path / log_file
 
-    # Configure logging
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(levelname)s - %(message)s',
-        handlers=[
-            logging.StreamHandler(),        # Console output
-            logging.FileHandler(file_path)  # File output
-        ]
-    )
+    logger = logging.getLogger("LOGGER")
+    logger.setLevel(logging.INFO)
 
-    return logging.getLogger(__name__)
+    # Prevent adding handlers multiple times
+    if not logger.hasHandlers():
+        # File handler
+        fh = logging.FileHandler(file_path)
+        fh.setLevel(logging.INFO)
+        fh.setFormatter(logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s"))
+        logger.addHandler(fh)
+
+        # Console handler
+        ch = logging.StreamHandler()
+        ch.setLevel(logging.INFO)
+        ch.setFormatter(logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s"))
+        logger.addHandler(ch)
+
+    return logger
     
 def save_data(
     data: pd.DataFrame,

@@ -44,20 +44,35 @@ def load_plot_configs() -> None:
     return chosen_palette
     
 def unify_palette_cyclers(axs):  # run BEFORE plotting
-    for ax in axs: # Unify palette cyclers for different plot types
+    if not type(axs) == np.ndarray:
+        ax = axs
+        # Shape of subplots of (1,1)
         ax._get_patches_for_fill = ax._get_lines
-
-    return axs
+        return ax
+    else:
+        # For multiple axes
+        for ax in axs: # Unify palette cyclers for different plot types
+            ax._get_patches_for_fill = ax._get_lines
+        return axs
     
 def prettify_subplots(axs):  # run AFTER plotting
-    for ax in axs:
+    if not type(axs) == np.ndarray:
+        # Shape of subplots of (1,1)
+        ax = axs  # to symbolize that there is only one axis
         ax.spines[['right', 'top']].set_visible(False)  # Remove spines
         ax.grid(alpha=.25)  # Add opaque gridlines
         ax.margins(0.005)  # Remove whitespace inside each plot
         ax.spines[['bottom','left']].set_alpha(0.5)  # Introduce opacity to the x- and y-axes spines
         ax.legend(bbox_to_anchor=[1, 1.05])
-    
-    return axs
+        return ax
+    else:
+        for ax in axs:
+            ax.spines[['right', 'top']].set_visible(False)  # Remove spines
+            ax.grid(alpha=.25)  # Add opaque gridlines
+            ax.margins(0.005)  # Remove whitespace inside each plot
+            ax.spines[['bottom','left']].set_alpha(0.5)  # Introduce opacity to the x- and y-axes spines
+            ax.legend(bbox_to_anchor=[1, 1.05])
+        return axs
 
 def make_negative_DA_price_mask(times, lambda_DA):
     # Initialize arrays
@@ -92,7 +107,7 @@ def remove_mult_suffix(string: str, suffixes: list):
         string = string.removesuffix(s)
     return string
 
-class PPA_modeling:
+class PPAModeling:
     '''
     This class is used to model the behaviour of a profit-maximizing
     developer who has entered a PPA.
@@ -605,7 +620,7 @@ class PPA_modeling:
 
 if __name__ == "__main__":
     # example
-    # d = PPA_modeling(PPA_profile='PaF',
+    # d = PPAModeling(PPA_profile='PaF',
     #                  BL_enforce_no_charge_in_deficit=False,
     #                  BL_annual_compliance_percentage=False,
     #                  BL_compliance_perc=0.0,  # caution: too high a compliance rate may be infeasible
@@ -629,7 +644,7 @@ if __name__ == "__main__":
         # Remove any numbering, so e.g. "C-BL_2" is simplified to "C-BL"
         p = remove_mult_suffix(string=p_, suffixes=['–RESTRICTED_CHARGING','–COMPLIANCE'])
 
-        m = PPA_modeling(
+        m = PPAModeling(
                 PPA_profile=p,
                 BL_enforce_no_charge_in_deficit=(True if p_.endswith('–RESTRICTED_CHARGING') else False),
                 BL_annual_compliance_percentage=(True if p_.endswith('–COMPLIANCE') else False),
