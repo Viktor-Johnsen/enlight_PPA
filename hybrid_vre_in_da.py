@@ -28,7 +28,7 @@ def initialize_data():
 
     return T, W, lambda_DA_w, P_fore_w
 
-class Hybrid_vre:
+class HybridVRE:
     '''
     This class is used to shorthand the formulation of a
     VRE producer with a BESS (hybrid plant) participating

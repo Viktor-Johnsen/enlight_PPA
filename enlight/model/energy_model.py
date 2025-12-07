@@ -389,4 +389,4 @@ class EnlightModel:
         """
         self.solve_model(solver_name=self.data.solver_name)
         utils.save_model_results(self)#, week=self.data.week)
-        self.save_model_to_lp_file()
+        # self.save_model_to_lp_file()

@@ -3,6 +3,10 @@ import matplotlib.pyplot as plt
 import gurobipy as gp
 from gurobipy import GRB
 import hybrid_vre_in_da as hv
+import logging
+import enlight.utils as utils
+from pathlib import Path
+
 
 def generate_data():
     np.random.seed(42)
@@ -59,7 +63,7 @@ def specify_battery_data():
 def perc(array, perc):
             return np.percentile(array, perc, axis=1)
 
-class NBS_Model:
+class NBSModel:
     '''
     Nash Bargaining Solution (NBS) model for bilateral contracts
     between a renewable energy developer (D) and an off-taker (O).
@@ -78,22 +82,30 @@ class NBS_Model:
     def __init__(self,
         PPA_profile: str = 'BL',  # Type of PPA profile ('PaF', 'PaP' or 'BL' )
         BL_compliance_perc : float = 0, # indicates the enforced compliance of the producer: meaning the % of BL PPA volume where the producer has to match the BL volume on an hourly basis
+        P_fore_w : np.ndarray = None,
+        L_t : np.ndarray = None,
+        lambda_DA_w : np.ndarray = None,
+        WTP : float = 0,
         add_batt: bool = None,
         hp : gp.Model = None,  # the optimal solution of the hybrid plant in DA math. model
-        S_R : float = 0,  # Minimum PPA strike price
-        S_U : float = 1000,  # Maximum PPA strike price
-        M_R : float = 0,  # BL: Minimum baseload volume
-        M_U : float = 1,  # BL: Maximum baseload volume
-        gamma_R : float = 0, # PaP: Minimum PPA capacity share volume
-        gamma_U : float = 1, # PaP: Minimum PPA capacity share volume
+        S_LB : float = 0,  # Minimum PPA strike price
+        S_UB : float = 1000,  # Maximum PPA strike price
+        M_LB : float = 0,  # BL: Minimum baseload volume
+        M_UB : float = 1,  # BL: Maximum baseload volume
+        gamma_LB : float = 0, # PaP: Minimum PPA capacity share volume
+        gamma_UB : float = 1, # PaP: Minimum PPA capacity share volume
         beta_D : float = 0.5,  # CVaR: Risk-aversion level of developer
         beta_O : float = 0.5,  # CVaR: Risk-aversion level of off-taker
         alpha : float = 0.9,  # CVaR: Tail of interest for CVaR
+        nbs_model_logger : logging.Logger | None = None,
     ) -> None:
     
         '''
         Initialize the NBS model with necessary parameters, variables, and constraints.
         '''
+        self.nbs_model_logger = nbs_model_logger or utils.setup_logging(log_file="nbs.log")
+        self.nbs_model_logger.info(f"INITIALIZING NBS MODEL with betas=(O:{beta_O}, D:{beta_D})")
+        
         self.PPA_profile = PPA_profile
 
         self.BL = False
@@ -107,6 +119,12 @@ class NBS_Model:
             self.BL_compliance_perc = BL_compliance_perc
         else:
             self.BL_compliance_perc = 0.0  # default to 0. Irrelevant, so it doesn't matter if it's the value input to the object instance.
+        
+        self.P_fore_w = P_fore_w
+        self.L_t = L_t
+        self.lambda_DA_w = lambda_DA_w
+        self.WTP = WTP
+
         self.add_batt = add_batt
 
         if self.add_batt is None:
@@ -117,17 +135,16 @@ class NBS_Model:
 
         self.hp = hp  # default is 'None'
 
-        self.S_R = S_R
-        self.S_U = S_U
-        self.M_R = M_R
-        self.M_U = M_U
-        self.gamma_R = gamma_R
-        self.gamma_U = gamma_U
+        self.S_LB = S_LB
+        self.S_UB = S_UB
+        self.M_LB = M_LB
+        self.M_UB = M_UB
+        self.gamma_LB = gamma_LB
+        self.gamma_UB = gamma_UB
         self.beta_D = beta_D
         self.beta_O = beta_O
         self.alpha = alpha
 
-        self.P_fore_w, self.lambda_DA_w, self.L_t, self.WTP = generate_data()
         self.T, self.W = self.P_fore_w.shape
 
         self.calc_aux_data()
@@ -146,10 +163,10 @@ class NBS_Model:
         - PROB_w[w] : probability of scenario w
         - L_w[w, t] : off-taker consumption in scenario w at time t
         - WTP : off-taker utility in €/MWh
-        - *S_R : minimum PPA strike price
-        - *S_U : maximum PPA strike price
-        - *M_R : minimum BL volume
-        - *M_U : maximum BL volume
+        - *S_LB : minimum PPA strike price
+        - *S_UB : maximum PPA strike price
+        - *M_LB : minimum BL volume
+        - *M_UB : maximum BL volume
         CVaR
             - *beta_D : risk-averseness level of developer
             - *beta_O : risk-averseness level of off-taker
@@ -178,7 +195,7 @@ class NBS_Model:
         ETA_D_w = VAR_D - PI_D_w  # Difference between VaR and expected profit in each scenario. We want to minimize this when we are risk-averse
         self.d_D = (
             (1 - self.beta_D) * sum([PI_D_w[w] * self.PROB_w[w] for w in range(self.W)])
-            + self.beta_D * (VAR_D - 1/(1-alpha) * sum([ETA_D_w[w] * self.PROB_w[w] for w in range(self.W) if ETA_D_w[w] >= 0]))
+            + self.beta_D * (VAR_D - 1/(1-self.alpha) * sum([ETA_D_w[w] * self.PROB_w[w] for w in range(self.W) if ETA_D_w[w] >= 0]))
         )
         self.PI_D_w, self.VAR_D, self.ETA_D_w = PI_D_w, VAR_D, ETA_D_w
 
@@ -188,7 +205,7 @@ class NBS_Model:
         ETA_O_w = VAR_O - PI_O_w  # Difference between VaR and expected utility in each scenario. We want to minimize this when we are risk-averse
         self.d_O = (
             (1 - self.beta_O) * sum([PI_O_w[w] * self.PROB_w[w] for w in range(self.W)])
-            + self.beta_O * (VAR_O - 1/(1-alpha) * sum([ETA_O_w[w] * self.PROB_w[w] for w in range(self.W) if ETA_O_w[w] >= 0]))
+            + self.beta_O * (VAR_O - 1/(1-self.alpha) * sum([ETA_O_w[w] * self.PROB_w[w] for w in range(self.W) if ETA_O_w[w] >= 0]))
         )
         self.PI_O_w, self.VAR_O, self.ETA_O_w = PI_O_w, VAR_O, ETA_O_w
         '''
@@ -201,7 +218,7 @@ class NBS_Model:
 
             if self.hp is None:
                 print("RUNNING HYBRID VRE")
-                hp = hv.Hybrid_vre(
+                hp = hv.HybridVRE(
                     P_fore_w = self.P_fore_w,
                     lambda_DA_w = self.lambda_DA_w,
                     # model = None,
@@ -253,7 +270,7 @@ class NBS_Model:
         '''
         
         #CVaR vars:
-        self.S = self.model.addVar(lb=self.S_R, ub=self.S_U, vtype=GRB.CONTINUOUS, name="S")        
+        self.S = self.model.addVar(lb=self.S_LB, ub=self.S_UB, vtype=GRB.CONTINUOUS, name="S")        
         self.zeta_D = self.model.addVar(vtype=GRB.CONTINUOUS, name="zeta_D")
         self.zeta_O = self.model.addVar(vtype=GRB.CONTINUOUS, name="zeta_O")
         self.eta_D_w = self.model.addVars(self.W, lb=0, vtype=GRB.CONTINUOUS, name="eta_D_w")
@@ -272,11 +289,11 @@ class NBS_Model:
 
     def BL_add_battery_vars_constrs(self) -> None:
         '''
-        Initiate an instance of the Hybrid_vre class and add the vars and constrs
+        Initiate an instance of the HybridVRE class and add the vars and constrs
         on top of the CVaR and AUX vars defined above.
         '''
-        # create Hybrid_vre instance
-        hp_BL = hv.Hybrid_vre(
+        # create HybridVRE instance
+        hp_BL = hv.HybridVRE(
             P_fore_w = self.P_fore_w,
             lambda_DA_w = self.lambda_DA_w,
             model = self.model,  # 
@@ -302,14 +319,14 @@ class NBS_Model:
 
         # Profile-specific variables
         if self.PPA_profile in ['PaF', 'PaP']:
-            self.gamma = self.model.addVar(lb=self.gamma_R, ub=self.gamma_U, vtype=GRB.CONTINUOUS, name="gamma")
+            self.gamma = self.model.addVar(lb=self.gamma_LB, ub=self.gamma_UB, vtype=GRB.CONTINUOUS, name="gamma")
             # Further if it is the future settlement, then the PPA payment and power delivery is COUPLED:
             if self.PPA_profile == 'PaP':
                 # Power offered in DA but compensated in the PPA
                 self.p_PPA = self.model.addMVar(shape=(self.T, self.W), lb=0, vtype=GRB.CONTINUOUS, name="p_PPA")
 
         elif self.BL:
-            self.M = self.model.addVar(lb=self.M_R, ub=self.M_U, vtype=GRB.CONTINUOUS, name="M")
+            self.M = self.model.addVar(lb=self.M_LB, ub=self.M_UB, vtype=GRB.CONTINUOUS, name="M")
             self.v_min = self.model.addMVar(shape=(self.T, self.W), lb=0, vtype=GRB.CONTINUOUS, name="v_min")
 
         else:
@@ -484,21 +501,143 @@ class NBS_Model:
                                 sense=GRB.MAXIMIZE)
 
     def build_model(self) -> None:
-        print("Start building the model")
         self.model = gp.Model("NBS")
         self.build_vars()  # General NBS vars
         self.build_profile_vars_constrs()  # Profile-specific vars and constrs
         self.build_aux_constrs()  # General NBS
         self.build_cvar_constrs()  # General NBS
         self.build_objective()  # General NBS
-        print("Finished building the model")
 
     def solve_model(self) -> None:
         self.model.Params.NonConvex = 2  # Enable non-convex solver
         self.model.write("NBS.lp")
         self.model.optimize()
 
-class NBS_runner:
+    def visualize_example_outcome(self):
+        if self.model.status == GRB.OPTIMAL:
+            S_X = self.S.X
+            low_perc = 10
+            high_perc = 90
+
+            fig, ax = plt.subplots(2,1, figsize=(8,10))
+
+            ax[0].plot(perc(self.P_fore_w, 50), label='Median power forecast', color='r', linestyle='-')
+            ax[0].fill_between(range(self.T), perc(self.P_fore_w, low_perc), perc(self.P_fore_w, high_perc), color='r', alpha=0.4, label='Power forecast 10-90 percentile')
+            ax[0].plot(self.L_t, label='Off-taker load profile', color='b', linestyle='-')
+            ax[0].plot(perc(self.P_DA_w, 50), label='Median DA dev. acc. off.', color='g', ls='--')
+
+            if self.BL:
+                M_X = self.M.X
+                ax[0].axhline(M_X, color='k', linestyle='-.', alpha=0.7,
+                            label='Agreed BL volume $M$')
+            elif self.PPA_profile in ['PaF', 'PaP']:
+                gamma_X = self.gamma.X
+                ax[0].plot(gamma_X * perc(self.P_fore_w, 50), color='k', linestyle='-.', alpha=0.7,
+                        label=r'Agreed PaP volume $\gamma$ (shown as % of median power forecast)')
+
+            ax[0].set_ylabel('Power [MW]')
+
+            ax[1].plot(perc(self.lambda_DA_w, 50), label='Median DA prices', color='r', linestyle='-')
+            ax[1].fill_between(range(self.T), perc(self.lambda_DA_w, low_perc), perc(self.lambda_DA_w, high_perc), color='r', alpha=0.4, label='DA price 10-90 percentile')
+            ax[1].axhline(S_X, color='k', linestyle='-.', label=f'Optimal {self.PPA_profile} PPA strike price $S$')
+            ax[1].set_ylabel('Price [€/MWh]')
+
+            ax[0].legend()
+            ax[1].legend()
+            plt.suptitle(fr"Off-taker with $\beta^O$={self.beta_O}, and developer with $\beta^D$={self.beta_D}")
+            plt.tight_layout()
+            plt.show()
+        else:
+            print("No results to show. No optimal solution was found.")
+
+    def visualize_example_profit_hists(self):
+        if self.model.status == GRB.OPTIMAL:
+
+            # # Compare their revenues distributions before and after
+            # # Pure DA revenues
+            # PI_D_w = [self.models[beta_O_chosen][beta_D_chosen].PI_D_w[w] for w in range(nbs_.W)]
+            # PI_O_w = [self.models[beta_O_chosen][beta_D_chosen].PI_O_w[w] for w in range(nbs_.W)]
+            # # VaR before PPA
+            # VaR_D = self.models[beta_O_chosen][beta_D_chosen].VAR_D
+            # VaR_O = self.models[beta_O_chosen][beta_D_chosen].VAR_O
+            # Expected DA + PPA revenues
+            PI_D_w_NBS = [self.y_D[w].X for w in range(self.W)]
+            PI_O_w_NBS = [self.y_O[w].X for w in range(self.W)]
+            # VaR after PPA
+            # zeta_D = self.models[beta_O_chosen][beta_D_chosen].zeta_D.X
+            # zeta_O = self.models[beta_O_chosen][beta_D_chosen].zeta_O.X
+
+
+            fig, ax = plt.subplots(1, 2, figsize=(8,6))
+            ax[0].hist(self.PI_D_w, color='r', alpha=0.5, label='Before')
+            ax[0].axvline(x=self.VAR_D, color='r', linestyle='--', label='VaR before')
+            ax[1].hist(self.PI_O_w, color='r', alpha=0.5, label='Before')
+            ax[1].axvline(x=self.VAR_O, color='r', linestyle='--', label='VaR before')
+
+            # PI_D_w_NBS = (nbs_.lambda_DA_w * nbs_.P_DA_w + (S_X - nbs_.lambda_DA_w) * M.X).sum(axis=0)
+            # PI_O_w_NBS = ( (nbs_.WTP - nbs_.lambda_DA_w) * nbs_.L_t - (S_X - nbs_.lambda_DA_w) * M.X).sum(axis=0)
+            ax[0].hist(PI_D_w_NBS, color='b', alpha=0.5, label='after NBS')
+            ax[0].axvline(x=self.zeta_D.X, color='b', linestyle='--', label='VaR after')
+            ax[1].hist(PI_O_w_NBS, color='b', alpha=0.5, label='after NBS')
+            ax[1].axvline(x=self.zeta_O.X, color='b', linestyle='--', label='VaR after')
+
+            ax[0].set_title(fr"Developer with $\beta^D=${self.beta_D}")
+            ax[0].legend()
+            ax[1].set_title(fr"Off-taker with $\beta^O=${self.beta_O}")
+            ax[1].legend()
+            plt.show()
+        else:
+            print("No results to show. No optimal solution was found.")
+     
+    def verify_behaviour(self, w_BESS=3):
+        if self.model.status == GRB.OPTIMAL:
+
+            # Verify behaviour of p_DA and p_PPA. If lambda_DA >= 0 in all hour-scenarios, then we should always max out both!!
+            if self.PPA_profile == 'PaP':
+                for i in range(d.W)[:4]:
+                    fig, ax = plt.subplots(figsize=(10,6))
+                    ax2 = ax.twinx()
+
+                    # Plot and compare total power available and offered
+                    # ax.plot(d.P_DA_w[:,i], alpha=.7, label=r"$\overline{P}^{DA}$")
+                    ax.plot(self.P_fore_w[:,i], ls='-', alpha=.5, lw=3, label=r"$P^{fore}$")
+                    ax.plot((1-self.gamma.X) * self.P_DA_w[:,i] + self.p_PPA.X[:,i], ls=':', alpha=.5, label=r"$P^{DA} + p^{PPA}$")
+
+                    # Plot and compare the power available and offered & remunerated at DA price
+                    ax.plot((1-self.gamma.X) * self.P_fore_w[:, i], alpha=.3, lw=3, label=r"$\left(1-\gamma\right) \cdot P^{fore}$")
+                    ax.plot((1-self.gamma.X) * self.P_DA_w[:,i], alpha=.5, ls='--', label=r"$P^{DA}$")
+
+                    # Plot and compare power available for PPA and offered to comply with PPA
+                    ax.plot(self.gamma.X * self.P_fore_w[:,i], alpha=.3, lw=3, label=r"$\gamma \cdot P^{fore}$")
+                    ax.plot(self.p_PPA.X[:,i], alpha=.5, ls='--', label=r"$p^{PPA}$")
+
+                    # ax.plot(d.L_t, label=r"$L$")
+                    # ax2.plot(d.lambda_DA_w[:, i], ls=':', c='k', label=r'$\lambda^{DA}$')
+                    # ax2.axhline(d.S.X, c='k', label="S")
+                    ax.legend(loc='upper left')
+                    # ax2.legend(loc='upper right')
+                    ax.set_title(f"w = {i}")
+                    plt.show()
+
+            elif self.BL:
+                # inspect the BESS behaviour to verify that HybridVRE has been correctly included in this model.
+                w_BESS=3
+                plt.plot(self.P_fore_w[:, w_BESS], label="P_fore")
+                plt.plot((self.p_DA.X + self.y_ch.X)[:, w_BESS], label="p_DA + y_ch", ls='--')
+                plt.plot(self.p_DA.X[:, w_BESS], label="p_DA", ls='--', alpha=.5)
+                if self.BL_compliance_perc > 0:
+                    plt.plot(self.v_min.X[:, w_BESS], label="v_min", c='r', alpha=.5)
+                plt.plot(self.SOC.X[:, w_BESS], label="SOC", ls=':', alpha=0.3)
+                plt.axhline(self.M.X, c='k', label="BL volume", alpha=.4)
+                plt.legend()
+                if self.beta_D == 1.0:
+                    plt.title(r'Beware! Nonsensical for $\beta_D=1.0$')
+                # plt.plot(d.y_ch.X[: ,w] * d.y_dch.X[: ,w])
+        else:
+            print("No results to show. No optimal solution was found.")
+
+
+class NBSMultModel:
     '''
     This class is used to create and run multiple NBS model instances.
     The class contains multiple methods for inspecting these results.
@@ -506,15 +645,22 @@ class NBS_runner:
     def __init__(self,
         PPA_profile: str = 'BL',  # Type of PPA profile ('BL' or 'PaP')
         BL_compliance_perc : float = 0, # indicates the enforced compliance of the producer: meaning the % of PPA volume where the producer has to match the BL volume on an hourly basis
+        P_fore_w : np.ndarray = None,
+        L_t : np.ndarray = None,
+        lambda_DA_w : np.ndarray = None,
+        WTP : float = 0,
         add_batt: bool = None,
-        S_R : float = 0,  # Minimum PPA strike price
-        S_U : float = 1000,  # Maximum PPA strike price
-        M_R : float = 0,  # BL: Minimum baseload volume
-        M_U : float = 1,  # BL: Maximum baseload volume
-        gamma_R : float = 0, # PaP: Minimum PPA capacity share volume
-        gamma_U : float = 1, # PaP: Minimum PPA capacity share volume
+        S_LB : float = 0,  # Minimum PPA strike price
+        S_UB : float = 1000,  # Maximum PPA strike price
+        M_LB : float = 0,  # BL: Minimum baseload volume
+        M_UB : float = 1,  # BL: Maximum baseload volume
+        gamma_LB : float = 0, # PaP: Minimum PPA capacity share volume
+        gamma_UB : float = 1, # PaP: Minimum PPA capacity share volume
         alpha : float = 0.9,  # CVaR: Tail of interest for CVaR
+        nbs_mult_logger : logging.Logger | None = None
     ) -> None:
+        self.nbs_mult_logger = nbs_mult_logger or utils.setup_logging(log_file="nbs.log")
+        self.nbs_mult_logger.info(f"INITIALIZE NBSMultModel instance")
 
         self.PPA_profile = PPA_profile
 
@@ -526,6 +672,12 @@ class NBS_runner:
             raise Exception(f"The chosen level of PPA BL compliance is not valid: {BL_compliance_perc}. It should be between [0,1].")
         else:
             self.BL_compliance_perc = BL_compliance_perc
+
+        self.P_fore_w = P_fore_w
+        self.L_t = L_t
+        self.lambda_DA_w = lambda_DA_w
+        self.WTP = WTP
+
         self.add_batt = add_batt
 
         if self.add_batt is None:
@@ -534,15 +686,17 @@ class NBS_runner:
             else:
                 self.add_batt = False
 
-        self.S_R = S_R
-        self.S_U = S_U
-        self.M_R = M_R
-        self.M_U = M_U
-        self.gamma_R = gamma_R
-        self.gamma_U = gamma_U
+        self.S_LB = S_LB
+        self.S_UB = S_UB
+        self.M_LB = M_LB
+        self.M_UB = M_UB
+        self.gamma_LB = gamma_LB
+        self.gamma_UB = gamma_UB
         self.alpha = alpha
 
     def run_multiple_NBS_models(self, beta_O_list, beta_D_list):
+        self.nbs_mult_logger.info(f"SOLVING multiple NBS models using NBSMultModel instance")
+
         self.beta_O_list = beta_O_list
         self.beta_D_list = beta_D_list
 
@@ -552,6 +706,9 @@ class NBS_runner:
         models = {}
         hybrid_plant_model = None  # save the disagreement point of the developer after running the first model since this value does not change between risk aversion
 
+        # Generate synthetic data only for the purpose of demonstrating the NBS behaviour.
+        
+
         ##### LOOP OVER BETAS #####
         for beta_O in beta_O_list:
             results_S[beta_O] = {}
@@ -560,21 +717,25 @@ class NBS_runner:
 
             for beta_D in beta_D_list:        
                 # Initialize NBS instance.
-                nbs_model = NBS_Model(
+                nbs_model = NBSModel(
                     PPA_profile=self.PPA_profile,  # BL or PaP
                     BL_compliance_perc=self.BL_compliance_perc,
+                    P_fore_w=self.P_fore_w,
+                    L_t=self.L_t,
+                    lambda_DA_w=self.lambda_DA_w,
+                    WTP=self.WTP,
                     # add_batt=False, # automatically defined as "True" if 'BL' and no bool is given.
                     hp=hybrid_plant_model,  # the optimal solution of the hybrid plant in DA math. model
-                    S_R=self.S_R, S_U=self.S_U,  # PPA price
-                    M_R=self.M_R, M_U=self.M_U,  # BL volume
-                    gamma_R=self.gamma_R, gamma_U=self.gamma_U,  # PaP volume
+                    S_LB=self.S_LB, S_UB=self.S_UB,  # PPA price
+                    M_LB=self.M_LB, M_UB=self.M_UB,  # BL volume
+                    gamma_LB=self.gamma_LB, gamma_UB=self.gamma_UB,  # PaP volume
                     beta_D=beta_D, beta_O=beta_O, alpha=self.alpha,
+                    nbs_model_logger=self.nbs_mult_logger,
                 )
                 hybrid_plant_model = nbs_model.hp
                 models[beta_O][beta_D] = nbs_model
                 # Build the mathematical model.
-                nbs_model.build_model()
-                print(f"\nSolving for β_D = {beta_D}, β_O = {beta_O} ...")
+                # print(f"\nSolving for β_D = {beta_D}, β_O = {beta_O} ...")
 
                 # Solve the optimization problem.
                 nbs_model.solve_model()
@@ -616,149 +777,6 @@ class NBS_runner:
         plt.tight_layout()
         plt.show()
 
-    def visualize_example_outcome(self, beta_O_chosen = None, beta_D_chosen = None):
-        if (beta_O_chosen == None or beta_D_chosen == None):
-            # Find some relevant values
-            for bO in self.beta_O_list:
-                for bD in self.beta_D_list:
-                    if not (np.isnan(self.results_S[bO][bD])  and np.isnan(self.results_volume[bO][bD])): # choose levels that results in an agreement
-                        if not (bD == 0.00 or bO == 0.00): # we want a more interesting scenario
-                            beta_O_chosen, beta_D_chosen = bO, bD
-
-        S_X = self.results_S[beta_O_chosen][beta_D_chosen]
-        low_perc = 10
-        high_perc = 90
-
-        fig, ax = plt.subplots(2,1, figsize=(8,10))
-
-        nbs_ = self.models[self.beta_O_list[0]][self.beta_D_list[0]]  # any instance can be used to retrieve the data
-
-        ax[0].plot(perc(nbs_.P_fore_w, 50), label='Median power forecast', color='r', linestyle='-')
-        ax[0].fill_between(range(nbs_.T), perc(nbs_.P_fore_w, low_perc), perc(nbs_.P_fore_w, high_perc), color='r', alpha=0.4, label='Power forecast 10-90 percentile')
-        ax[0].plot(nbs_.L_t, label='Off-taker load profile', color='b', linestyle='-')
-        ax[0].plot(perc(nbs_.P_DA_w, 50), label='Median DA dev. acc. off.', color='g', ls='--')
-
-        if self.BL:
-            M_X = self.results_volume[beta_O_chosen][beta_D_chosen]
-            ax[0].axhline(M_X, color='k', linestyle='-.', alpha=0.7,
-                        label='Agreed BL volume $M$')
-        elif self.PPA_profile in ['PaF', 'PaP']:
-            gamma_X = self.results_volume[beta_O_chosen][beta_D_chosen]
-            ax[0].plot(gamma_X * perc(nbs_.P_fore_w, 50), color='k', linestyle='-.', alpha=0.7,
-                    label=r'Agreed PaP volume $\gamma$ (shown as % of median power forecast)')
-
-        ax[0].set_ylabel('Power [MW]')
-
-        ax[1].plot(perc(nbs_.lambda_DA_w, 50), label='Median DA prices', color='r', linestyle='-')
-        ax[1].fill_between(range(nbs_.T), perc(nbs_.lambda_DA_w, low_perc), perc(nbs_.lambda_DA_w, high_perc), color='r', alpha=0.4, label='DA price 10-90 percentile')
-        ax[1].axhline(S_X, color='k', linestyle='-.', label=f'Optimal {PPA_profile} PPA strike price $S$')
-        ax[1].set_ylabel('Price [€/MWh]')
-
-        ax[0].legend()
-        ax[1].legend()
-        plt.suptitle(fr"Off-taker with $\beta^O$={beta_O_chosen}, and developer with $\beta^D$={beta_D_chosen}")
-        plt.tight_layout()
-        plt.show()
-
-    def visualize_example_profit_hists(self, beta_O_chosen = None, beta_D_chosen = None):
-        if (beta_O_chosen == None or beta_D_chosen == None):
-            # Find some relevant values
-            for bO in self.beta_O_list:
-                for bD in self.beta_D_list:
-                    if not (np.isnan(self.results_S[bO][bD])  and np.isnan(self.results_volume[bO][bD])): # choose levels that results in an agreement
-                        if not (bD == 0.00 or bO == 0.00): # we want a more interesting scenario
-                            beta_O_chosen, beta_D_chosen = bO, bD
-
-        nbs_ = self.models[beta_O_chosen][beta_D_chosen]  # any instance can be used to retrieve the data
-
-        # Compare their revenues distributions before and after
-        # Pure DA revenues
-        PI_D_w = [self.models[beta_O_chosen][beta_D_chosen].PI_D_w[w] for w in range(nbs_.W)]
-        PI_O_w = [self.models[beta_O_chosen][beta_D_chosen].PI_O_w[w] for w in range(nbs_.W)]
-        # VaR before PPA
-        VaR_D = self.models[beta_O_chosen][beta_D_chosen].VAR_D
-        VaR_O = self.models[beta_O_chosen][beta_D_chosen].VAR_O
-        # Expected DA + PPA revenues
-        PI_D_w_NBS = [self.models[beta_O_chosen][beta_D_chosen].y_D[w].X for w in range(nbs_.W)]
-        PI_O_w_NBS = [self.models[beta_O_chosen][beta_D_chosen].y_O[w].X for w in range(nbs_.W)]
-        # VaR after PPA
-        zeta_D = self.models[beta_O_chosen][beta_D_chosen].zeta_D.X
-        zeta_O = self.models[beta_O_chosen][beta_D_chosen].zeta_O.X
-
-
-        fig, ax = plt.subplots(1, 2, figsize=(8,6))
-        ax[0].hist(PI_D_w, color='r', alpha=0.5, label='Before')
-        ax[0].axvline(x=VaR_D, color='r', linestyle='--', label='VaR before')
-        ax[1].hist(PI_O_w, color='r', alpha=0.5, label='Before')
-        ax[1].axvline(x=VaR_O, color='r', linestyle='--', label='VaR before')
-
-        # PI_D_w_NBS = (nbs_.lambda_DA_w * nbs_.P_DA_w + (S_X - nbs_.lambda_DA_w) * M.X).sum(axis=0)
-        # PI_O_w_NBS = ( (nbs_.WTP - nbs_.lambda_DA_w) * nbs_.L_t - (S_X - nbs_.lambda_DA_w) * M.X).sum(axis=0)
-        ax[0].hist(PI_D_w_NBS, color='b', alpha=0.5, label='after NBS')
-        ax[0].axvline(x=zeta_D, color='b', linestyle='--', label='VaR after')
-        ax[1].hist(PI_O_w_NBS, color='b', alpha=0.5, label='after NBS')
-        ax[1].axvline(x=zeta_O, color='b', linestyle='--', label='VaR after')
-
-        ax[0].set_title(fr"Developer with $\beta^D=${beta_D_chosen}")
-        ax[0].legend()
-        ax[1].set_title(fr"Off-taker with $\beta^O=${beta_O_chosen}")
-        ax[1].legend()
-        plt.show()
-        
-    def verify_behaviour(self, beta_O_chosen = None, beta_D_chosen = None, w_BESS=3):
-        if (beta_O_chosen == None or beta_D_chosen == None):
-            # Find some relevant values
-            for bO in self.beta_O_list:
-                for bD in self.beta_D_list:
-                    if not (np.isnan(self.results_S[bO][bD])  and np.isnan(self.results_volume[bO][bD])): # choose levels that results in an agreement
-                        if not (bD == 0.00 or bO == 0.00): # we want a more interesting scenario
-                            beta_O_chosen, beta_D_chosen = bO, bD
-
-        # For easier handling and debugging
-        d = self.models[beta_O_chosen][beta_D_chosen]
-
-        # Verify behaviour of p_DA and p_PPA. If lambda_DA >= 0 in all hour-scenarios, then we should always max out both!!
-        if d.PPA_profile == 'PaP':
-            for i in range(d.W)[:4]:
-                fig,ax = plt.subplots(figsize=(10,6))
-                ax2 = ax.twinx()
-
-                # Plot and compare total power available and offered
-                # ax.plot(d.P_DA_w[:,i], alpha=.7, label=r"$\overline{P}^{DA}$")
-                ax.plot(d.P_fore_w[:,i], ls='-', alpha=.5, lw=3, label=r"$P^{fore}$")
-                ax.plot((1-d.gamma.X) * d.P_DA_w[:,i] + d.p_PPA.X[:,i], ls=':', alpha=.5, label=r"$P^{DA} + p^{PPA}$")
-
-                # Plot and compare the power available and offered & remunerated at DA price
-                ax.plot((1-d.gamma.X) * d.P_fore_w[:, i], alpha=.3, lw=3, label=r"$\left(1-\gamma\right) \cdot P^{fore}$")
-                ax.plot((1-d.gamma.X) * d.P_DA_w[:,i], alpha=.5, ls='--', label=r"$P^{DA}$")
-
-                # Plot and compare power available for PPA and offered to comply with PPA
-                ax.plot(d.gamma.X * d.P_fore_w[:,i], alpha=.3, lw=3, label=r"$\gamma \cdot P^{fore}$")
-                ax.plot(d.p_PPA.X[:,i], alpha=.5, ls='--', label=r"$p^{PPA}$")
-
-                # ax.plot(d.L_t, label=r"$L$")
-                # ax2.plot(d.lambda_DA_w[:, i], ls=':', c='k', label=r'$\lambda^{DA}$')
-                # ax2.axhline(d.S.X, c='k', label="S")
-                ax.legend(loc='upper left')
-                # ax2.legend(loc='upper right')
-                ax.set_title(f"w = {i}")
-                plt.show()
-
-        elif d.BL:
-            # inspect the BESS behaviour to verify that Hybrid_vre has been correctly included in this model.
-            w_BESS=3
-            plt.plot(d.P_fore_w[:, w_BESS], label="P_fore")
-            plt.plot((d.p_DA.X + d.y_ch.X)[:, w_BESS], label="p_DA + y_ch", ls='--')
-            plt.plot(d.p_DA.X[:, w_BESS], label="p_DA", ls='--', alpha=.5)
-            if d.BL_compliance_perc > 0:
-                plt.plot(d.v_min.X[:, w_BESS], label="v_min", c='r', alpha=.5)
-            plt.plot(d.SOC.X[:, w_BESS], label="SOC", ls=':', alpha=0.3)
-            plt.axhline(d.M.X, c='k', label="BL volume", alpha=.4)
-            plt.legend()
-            if beta_D_chosen == 1.0:
-                plt.title(r'Beware! Nonsensical for $\beta_D=1.0$')
-            # plt.plot(d.y_ch.X[: ,w] * d.y_dch.X[: ,w])
-
 
 #%%
 if __name__ == "__main__":
@@ -767,48 +785,49 @@ if __name__ == "__main__":
 
     # Capture price VRE: (d.P_DA_w * d.lambda_DA_w).sum() / d.P_DA_w.sum() = 96.38 €/MWh
     # Capture price load: - (d.L_t * d.lambda_DA_w).sum() / (d.W * d.L_t.sum()) = -98.1 €/MWh
-    S_R, S_U = 96.38 * 0.5, 98.1*1.5  # PPA strike price bounds
-    M_R, M_U = 0.01, 0.99  # BL volume bounds.
-    gamma_R, gamma_U = 0, 1  # PaP capacity share bounds.
+    S_LB, S_UB = 96.38 * 0.5, 98.1*1.5  # PPA strike price bounds
+    M_LB, M_UB = 0.01, 0.99  # BL volume bounds.
+    gamma_LB, gamma_UB = 0, 1  # PaP capacity share bounds.
 
     # Profile type
-    PPA_profile = 'BL'
-    BL_compliance_perc = 0.9
+    PPA_profile = 'PaF'
+    BL_compliance_perc = 0.0
 
     # Define ranges for betas
-    beta_D_list = np.round(np.arange(0.0, 1.01, 0.1), 2)  # avoid floating point issues
-    beta_O_list = np.round(np.arange(0.0, 1.01, 0.1), 2)  # avoid floating point issues
+    beta_D_list = np.round(np.arange(0.0, 0.31, 0.1), 2)  # avoid floating point issues
+    beta_O_list = np.round(np.arange(0.0, 0.31, 0.1), 2)  # avoid floating point issues
 
-    runner = NBS_runner(
+    P_fore_w, lambda_DA_w, L_t, WTP = generate_data()
+
+    runner = NBSMultModel(
         PPA_profile=PPA_profile,  # Type of PPA profile ('PaF', 'PaP', or 'BL')
         BL_compliance_perc=BL_compliance_perc, # indicates the enforced compliance of the producer: meaning the % of PPA volume where the producer has to match the BL volume on an hourly basis
+        P_fore_w=P_fore_w,
+        L_t=L_t,
+        lambda_DA_w=lambda_DA_w,
+        WTP=WTP,
         # add_batt=True,
-        S_R=S_R,  # Minimum PPA strike price
-        S_U=S_U,  # Maximum PPA strike price
-        M_R=M_R,  # BL: Minimum baseload volume
-        M_U=M_U,  # BL: Maximum baseload volume
-        gamma_R=gamma_R, # PaP: Minimum PPA capacity share volume
-        gamma_U=gamma_U, # PaP: Minimum PPA capacity share volume
+        S_LB=S_LB,  # Minimum PPA strike price
+        S_UB=S_UB,  # Maximum PPA strike price
+        M_LB=M_LB,  # BL: Minimum baseload volume
+        M_UB=M_UB,  # BL: Maximum baseload volume
+        gamma_LB=gamma_LB, # PaP: Minimum PPA capacity share volume
+        gamma_UB=gamma_UB, # PaP: Minimum PPA capacity share volume
         alpha=alpha,  # CVaR: Tail of interest for CVaR
     )
-
+    #%%
     runner.run_multiple_NBS_models(beta_O_list=beta_O_list,
                                    beta_D_list=beta_D_list)
 
     runner.visualize_risk_impact_heatmap()
 
-    beta_O_chosen=beta_O_list[2]
+    beta_O_chosen=beta_O_list[3]
     beta_D_chosen=beta_D_list[2]
 
     # For debugging
     d = runner.models[beta_O_chosen][beta_D_chosen]
     # end
 
-    runner.visualize_example_outcome(beta_O_chosen=beta_O_chosen,
-                                     beta_D_chosen=beta_D_chosen)
-
-    runner.visualize_example_profit_hists(beta_O_chosen=beta_O_chosen,
-                                          beta_D_chosen=beta_D_chosen)
-    
-    runner.verify_behaviour(beta_O_chosen=beta_O_chosen,
-                            beta_D_chosen=beta_D_chosen)
+    d.visualize_example_outcome()
+    d.visualize_example_profit_hists()
+    d.verify_behaviour()
