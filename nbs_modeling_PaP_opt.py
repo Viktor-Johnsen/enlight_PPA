@@ -6,7 +6,6 @@ import hybrid_vre_in_da as hv
 import logging
 import enlight.utils as utils
 from pathlib import Path
-import time
 
 
 def generate_data():
@@ -64,7 +63,6 @@ def specify_battery_data():
 def perc(array, perc):
             return np.percentile(array, perc, axis=1)
 
-
 class NBSModel:
     '''
     Nash Bargaining Solution (NBS) model for bilateral contracts
@@ -98,7 +96,7 @@ class NBSModel:
         gamma_UB : float = 1, # PaP: Minimum PPA capacity share volume
         beta_D : float = 0.5,  # CVaR: Risk-aversion level of developer
         beta_O : float = 0.5,  # CVaR: Risk-aversion level of off-taker
-        alpha : float = 0.8,  # CVaR: Tail of interest for CVaR
+        alpha : float = 0.9,  # CVaR: Tail of interest for CVaR
         nbs_model_logger : logging.Logger | None = None,
     ) -> None:
     
@@ -126,7 +124,7 @@ class NBSModel:
         self.L_t = L_t
         self.lambda_DA_w = lambda_DA_w
         self.WTP = WTP
-        
+
         self.add_batt = add_batt
 
         if self.add_batt is None:
@@ -148,7 +146,7 @@ class NBSModel:
         self.alpha = alpha
 
         self.T, self.W = self.P_fore_w.shape
-        
+
         self.calc_aux_data()
         self.compute_disagreement_points()
         self.build_model()
@@ -322,6 +320,10 @@ class NBSModel:
         # Profile-specific variables
         if self.PPA_profile in ['PaF', 'PaP']:
             self.gamma = self.model.addVar(lb=self.gamma_LB, ub=self.gamma_UB, vtype=GRB.CONTINUOUS, name="gamma")
+            # Further if it is the future settlement, then the PPA payment and power delivery is COUPLED:
+            if self.PPA_profile == 'PaP':
+                # Power offered in DA but compensated in the PPA
+                self.p_PPA = self.model.addMVar(shape=(self.T, self.W), lb=0, vtype=GRB.CONTINUOUS, name="p_PPA")
 
         elif self.BL:
             self.M = self.model.addVar(lb=self.M_LB, ub=self.M_UB, vtype=GRB.CONTINUOUS, name="M")
@@ -340,8 +342,8 @@ class NBSModel:
                                     (1 - self.gamma) * self.P_DA_w[t, w] * self.lambda_DA_w[t, w]  # DA revenues (don't sell if DA price < 0)
                                         + self.gamma * self.P_fore_w[t, w] * self.S # PaP PPA revenues (sell even if DA price < 0)
                                     for t in range(self.T)
-                                ) for w in range(self.W)), name='c_yD_link_PaF')
-            
+                                ) for w in range(self.W)), name='c_yD_link_PaF'
+            )
             self.model.addConstrs((self.y_O[w] ==
                                 gp.quicksum(
                                     self.gamma * self.P_fore_w[t, w] * (self.WTP - self.S)  # The PPA volume is paid at the strike price
@@ -350,24 +352,31 @@ class NBSModel:
                                             * (self.WTP - self.lambda_DA_w[t, w])  # The rest is procured (or sold) in the DA market
                                         for t in range(self.T)
                                 )
-                                for w in range(self.W)), name='c_yO_link_PaF')
+                                for w in range(self.W)), name='c_yO_link_PaF'
+            )
             
         elif self.PPA_profile == 'PaP':
             # Restrict PPA-remunerated volume to contracted volume.
-            # Three options for PaP:
-            # 1. Assume that the price difference is always settled to PPA price (offer at minimum allowed price) -> identical 
-            # 2. Assume that at maximum PPA price is paid to the producer (offer at -PPA price)
-            # 3. No PPA payment at negative prices (offer at 0 price)
-            # including a 'p_PPA' variable would allow to always easily adapt the model to capture this behaviour. BUT it is unable to run efficiently for longer periods than 10 weeks...
-            # We do not lose interesting insight by just modelling PaP option 3. PaP option 1. is included in PaF and can be used to analyze the effect of PaP 2. anyways.
-
+            # Currently it is not useful because we assume that the Producer
+            # always earns net the PPA price, however, if the Buyer would choose
+            # not to settle negative prices then the Producer's offering price would change.
+            # including 'p_PPA' always to easily adapt the model to capture this behaviour.
+            self.model.addConstrs((self.p_PPA[t, w]
+                                    <=
+                                    self.gamma * self.P_fore_w[t, w]
+                                    for t in range(self.T) for w in range(self.W)),
+                                    name="c_p_PPA")
+            
             # Write objective function of the profit-maximizing developer
             #   and utility-maximizing off-taker.
             self.model.addConstrs((self.y_D[w] ==
                                 gp.quicksum(
+                                    # (1 - self.gamma) is implicit in p_DA because of
+                                    #   the upper bound (1-gamma)*P_fore.
                                     (1 - self.gamma) * self.P_DA_w[t, w] * self.lambda_DA_w[t, w]  # DA revenues
-                                    + self.gamma * self.P_DA_w[t, w] * self.S # PaP PPA revenues
-                                    #+ self.gamma * self.P_fore_w[t, w] * self.S # PaP PPA revenues
+                                    # self.gamma is implicit in p_PPA because of
+                                    #   the upper bound gamma*P_fore
+                                    + self.p_PPA[t, w] * self.S # PaP PPA revenues
                                     for t in range(self.T)
                                 ) for w in range(self.W)), name='c_yD_link_PaP')
             self.model.addConstrs((self.y_O[w] ==
@@ -376,8 +385,7 @@ class NBSModel:
                                     #   not just for the forecast: P_fore_w.
                                     # Note that we use P_fore_w instead of P_DA_w, because the offers
                                     #   are now optimized as well, as for P_DA_w the assumption of MC=0 is made.
-                                    #self.gamma * self.P_fore_w[t, w] * (self.WTP - self.S)  # The PPA volume is paid at the strike price
-                                    self.gamma * self.P_DA_w[t, w] * (self.WTP - self.S)  # The PPA volume is paid at the strike price
+                                    self.p_PPA[t, w] * (self.WTP - self.S)  # The PPA volume is paid at the strike price
                                     +
                                     (self.L_t.ravel()[t] - self.gamma * self.P_fore_w[t, w])
                                             * (self.WTP - self.lambda_DA_w[t, w])  # The rest is procured (or sold) in the DA market
@@ -397,18 +405,18 @@ class NBSModel:
                                     # OLD, plain P_DA_w (= forecast in non-negative price hours):
                                     # self.lambda_DA_w[t,w] * self.P_DA_w[t,w]  # DA revenues
                                     # NEW, p_DA optimized with BESS
-                                    (self.lambda_DA_w[t,w] * self.p_DA[t,w]  # DA revenues
-                                    + (self.S - self.lambda_DA_w[t,w]) * self.M)  # BL PPA revenues
+                                    self.lambda_DA_w[t,w] * self.p_DA[t,w]  # DA revenues
+                                    + (self.S - self.lambda_DA_w[t,w]) * self.M  # BL PPA revenues
                                     for t in range(self.T)
                                 ) for w in range(self.W)), name='c_yD_link_BL')
             self.model.addConstrs((self.y_O[w] ==
                                 gp.quicksum(
-                                    (self.L_t.ravel()[t] * (self.WTP - self.lambda_DA_w[t,w])  # Costs in DA
-                                    - self.M * (self.S - self.lambda_DA_w[t,w]))  # Costs in BL PPA
+                                    self.L_t.ravel()[t] * (self.WTP - self.lambda_DA_w[t,w])  # Costs in DA
+                                    - self.M * (self.S - self.lambda_DA_w[t,w])  # Costs in BL PPA
                                     for t in range(self.T)
                                 ) for w in range(self.W)), name='c_yO_link_BL')
             # further, add compliance:
-            if self.BL_compliance_perc > 0:
+            if self.BL:
                 # v_min is the BL volume matched by the producer on hourly basis
                 self.model.addConstrs((self.v_min[t, w] <= self.p_DA[t, w]
                                         for t in range(self.T) for w in range(self.W)),
@@ -507,10 +515,6 @@ class NBSModel:
         self.model.Params.NonConvex = 2  # Enable non-convex solver
         self.model.write("NBS.lp")
         self.model.optimize()
-        
-        # save a specific result
-        if self.BL and self.model.status == GRB.OPTIMAL:
-            self.compliance_rates = self.v_min.X.sum(axis=0)/(self.T * self.M.X)
 
     def visualize_example_outcome(self):
         if self.model.status == GRB.OPTIMAL:
@@ -655,7 +659,7 @@ class NBSMultModel:
         M_UB : float = 1,  # BL: Maximum baseload volume
         gamma_LB : float = 0, # PaP: Minimum PPA capacity share volume
         gamma_UB : float = 1, # PaP: Minimum PPA capacity share volume
-        alpha : float = 0.8,  # CVaR: Tail of interest for CVaR
+        alpha : float = 0.9,  # CVaR: Tail of interest for CVaR
         nbs_mult_logger : logging.Logger | None = None
     ) -> None:
         self.nbs_mult_logger = nbs_mult_logger or utils.setup_logging(log_file="nbs.log")
@@ -716,7 +720,6 @@ class NBSMultModel:
 
             for beta_D in beta_D_list:        
                 # Initialize NBS instance.
-                t0b = time.time()
                 nbs_model = NBSModel(
                     PPA_profile=self.PPA_profile,  # BL or PaP
                     BL_compliance_perc=self.BL_compliance_perc,
@@ -736,11 +739,10 @@ class NBSMultModel:
                 models[beta_O][beta_D] = nbs_model
                 # Build the mathematical model.
                 # print(f"\nSolving for β_D = {beta_D}, β_O = {beta_O} ...")
-                tb = time.time()
+
                 # Solve the optimization problem.
                 nbs_model.solve_model()
-                ts = time.time()
-                self.nbs_mult_logger.info(f"Building time: {tb-t0b:.2f}. Solving time: {ts-tb:.2f}.")
+
                 # Save the results of PPA price and volume explicitly if it was solved to optimality.
                 if nbs_model.model.status == GRB.OPTIMAL:
                     results_S[beta_O][beta_D] = nbs_model.S.X
@@ -795,8 +797,8 @@ if __name__ == "__main__":
     BL_compliance_perc = 0.8
 
     # Define ranges for betas
-    beta_D_list = np.round(np.arange(0.0, 0.91, 0.2), 2)  # avoid floating point issues
-    beta_O_list = np.round(np.arange(0.0, 0.91, 0.2), 2)  # avoid floating point issues
+    beta_D_list = np.round(np.arange(0.0, 0.31, 0.1), 2)  # avoid floating point issues
+    beta_O_list = np.round(np.arange(0.0, 0.31, 0.1), 2)  # avoid floating point issues
 
     P_fore_w, lambda_DA_w, L_t, WTP = generate_data()
 
@@ -832,3 +834,4 @@ if __name__ == "__main__":
     d.visualize_example_outcome()
     d.visualize_example_profit_hists()
     d.verify_behaviour()
+
