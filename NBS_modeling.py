@@ -271,8 +271,9 @@ class NBSModel:
             # eta_O_w = off-taker profit in scenario w
         '''
         
-        #CVaR vars:
+        
         self.S = self.model.addVar(lb=self.S_LB, ub=self.S_UB, vtype=GRB.CONTINUOUS, name="S")        
+        #CVaR vars:
         self.zeta_D = self.model.addVar(vtype=GRB.CONTINUOUS, name="zeta_D")
         self.zeta_O = self.model.addVar(vtype=GRB.CONTINUOUS, name="zeta_O")
         self.eta_D_w = self.model.addVars(self.W, lb=0, vtype=GRB.CONTINUOUS, name="eta_D_w")
@@ -435,7 +436,7 @@ class NBSModel:
         self.model.addGenConstrLog(self.x_D, self.log_uD_dD, name="c_log_uD_dD")
         self.model.addGenConstrLog(self.x_O, self.log_uO_dO, name="c_log_uO_dO")
 
-        self.model.setObjective(self.log_uD_dD + self.log_uO_dO, sense=GRB.MAXIMIZE)
+        # self.model.setObjective(self.log_uD_dD + self.log_uO_dO, sense=GRB.MAXIMIZE)
 
         # Add aux constraints to make obj readable
         self.model.addConstr(self.u_D

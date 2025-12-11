@@ -46,7 +46,6 @@ class HybridVRE:
         # no additional constraints: 998.6 €, PPA cov. 66.6%
         P_fore_w : np.ndarray,  # shape=(T,W) -- power forecast in MW
         lambda_DA_w : np.ndarray,  # shape=(T,W) -- €/MWh, DA prices
-        FREQ_hours : np.ndarray = None,  # shape=(T,W) -- number of hours represented by hour t.
         model : gp.Model = None,  # use an existing model to build on top of that one
         add_batt : bool = True,  # boolean to include battery or not
         batt_power : float = 0.25, # MW

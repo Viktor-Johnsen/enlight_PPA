@@ -648,7 +648,7 @@ if __name__ == "__main__":
                 PPA_profile=p,
                 BL_enforce_no_charge_in_deficit=(True if p_.endswith('–RESTRICTED_CHARGING') else False),
                 BL_annual_compliance_percentage=(True if p_.endswith('–COMPLIANCE') else False),
-                BL_compliance_perc=0.612,
+                BL_compliance_perc=0.827,
                 add_batt=(True if p in ['BL', 'C-BL', 'AC-BL'] else False)
             )
 

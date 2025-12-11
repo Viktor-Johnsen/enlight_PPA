@@ -56,7 +56,8 @@ def week_reduction(fore_power : np.ndarray, lambda_DA : np.ndarray, scen0 : int,
 
     # Calculate the "probability" of each week. More fitting terminology is probably the "weight" of each week.
     cluster_size = np.array(list(map(lambda x: len(x), k.get_clusters())))
-    PROB = cluster_size / 52
+    PROB_week = cluster_size / 52
+    PROB = PROB_week / 168  # probability should be divided unto all of the hours in that week
 
     # For plotting examples of selected representative weeks
     least_prob = np.argmin(PROB)
@@ -203,6 +204,8 @@ class PPAInputCalcs:
 
         self.generate_scenarios(self.P_fore, noise_lvl=.1, attr_name="P_fore_w")
         self.generate_scenarios(self.lambda_DA, noise_lvl=0.15, attr_name="lambda_DA_w")
+        # self.hour_reduction(num_clusters=self.num_clusters)
+
         # self.shorten_years()  # <- function required to actually run model. Too big if using 8760 hours...
         
         # Finally, if we choose to only use representative weeks/hours:
@@ -377,6 +380,19 @@ class PPAInputCalcs:
         # E.g. P_fore_w
         setattr(self, attr_name, mult_year_param)
 
+    def hour_reduction(self, num_clusters : int = 6):
+        (self.P_fore_w_red,
+         self.lambda_DA_w_red,
+         self.PROB_w_red,
+         self.weeks_l
+         ) = week_reduction_by_scenario(
+             fore_power_w=self.P_fore_w,
+             lambda_DA_w=self.lambda_DA_w,
+             num_clusters=num_clusters
+        )
+        B_fore_arr_red = self.B_fore_arr[:168*52].reshape(52, 168)
+        B_fore_arr_red = B_fore_arr_red[self.weeks_l[1]].ravel()
+        self.B_fore_arr_red = B_fore_arr_red.reshape(len(B_fore_arr_red), 1)
 
 @dataclass
 class NBSSetup:
@@ -410,7 +426,7 @@ if __name__=="__main__":
     load_plot_configs()  
     # Setup hyperparameters
     logger = utils.setup_logging(log_file="nbs.log")
-    PPA_profile = "PaF"
+    PPA_profile = "BL"
     BL_compliance_rate = 0.0
     PPA_zone = "DELU"
     simulation_path = Path(f'simulations/scenario_1')
@@ -460,9 +476,9 @@ if __name__=="__main__":
     nbs_model = NBSModel(
         PPA_profile=PPA_profile,
         BL_compliance_perc=BL_compliance_rate,
-        P_fore_w=ppa_calcs.P_fore_w, #[:8736,:], # -> used to verify that FREQ_hours has been implemented correctly
-        L_t=ppa_calcs.B_fore_arr, #[:8736],
-        lambda_DA_w=ppa_calcs.lambda_DA_w, #[:8736, :],
+        P_fore_w=ppa_calcs.P_fore_w_red, #[:8736,:], # -> used to verify that FREQ_hours has been implemented correctly
+        L_t=ppa_calcs.B_fore_arr_red, #[:8736],
+        lambda_DA_w=ppa_calcs.lambda_DA_w_red, #[:8736, :],
         WTP=ppa_data.WTP,
         # add_batt,
         # hp=None,
