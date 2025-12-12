@@ -1,20 +1,20 @@
 import numpy as np
 import matplotlib.pyplot as plt
+import time
+import logging
+from pathlib import Path
 import gurobipy as gp
 from gurobipy import GRB
-import hybrid_vre_in_da as hv
-import logging
 import enlight.utils as utils
-from pathlib import Path
-import time
+import hybrid_vre_in_da as hv
 
 
 def generate_data():
     np.random.seed(42)
-    num_weeks = 1/7
+    num_weeks = 52 # 1/7
     num_days = int(7 * num_weeks)
     T = 24 * num_days  # num hours
-    W = 10  # num scenarios
+    W = 5  # num scenarios
 
     PROB_w = np.full(shape=W, fill_value=1/W)  # all scenarios are equiprobable
 
@@ -23,11 +23,17 @@ def generate_data():
     P_fore_w = dist/np.max(dist)  # normalized forecast between 0 and 1
 
     # Generate DA prices
+    # lambda_DA_day = np.array([
+    #     89.33, 89.14, 87.95, 86.89, 88.69, 98.73,
+    #     113.97, 117.38, 108.84, 100.01, 72.64, 64.23,
+    #     40.25, -23.12, 39.33, 71.01, 83.13, 110.93,
+    #     125.91, 220.25, -195.33, 119.71, 108.31, 97.7
+    #     ]).reshape(24, 1)  # September 1st prices
     lambda_DA_day = np.array([
         89.33, 89.14, 87.95, 86.89, 88.69, 98.73,
         113.97, 117.38, 108.84, 100.01, 72.64, 64.23,
-        40.25, -23.12, 39.33, 71.01, 83.13, 110.93,
-        125.91, 220.25, -195.33, 119.71, 108.31, 97.7
+        40.25, 23.12, 39.33, 71.01, 83.13, 110.93,
+        125.91, 220.25, 195.33, 119.71, 108.31, 97.7
         ]).reshape(24, 1)  # September 1st prices
 
     lambda_DA = np.vstack([lambda_DA_day for _ in range(num_days)])
@@ -85,6 +91,9 @@ class NBSModel:
         PPA_profile: str = 'BL',  # Type of PPA profile ('PaF', 'PaP' or 'BL' )
         BL_compliance_perc : float = 0, # indicates the enforced compliance of the producer: meaning the % of BL PPA volume where the producer has to match the BL volume on an hourly basis
         P_fore_w : np.ndarray = None,
+        P_batt : float = 1.0,
+        batt_eta : float = float(np.sqrt(0.9)),
+        batt_Crate : float = 1.0,
         L_t : np.ndarray = None,
         lambda_DA_w : np.ndarray = None,
         WTP : float = 0,
@@ -123,6 +132,9 @@ class NBSModel:
             self.BL_compliance_perc = 0.0  # default to 0. Irrelevant, so it doesn't matter if it's the value input to the object instance.
         
         self.P_fore_w = P_fore_w
+        self.P_batt = P_batt
+        self.batt_eta = batt_eta
+        self.batt_Crate = batt_Crate
         self.L_t = L_t
         self.lambda_DA_w = lambda_DA_w
         self.WTP = WTP
@@ -216,7 +228,7 @@ class NBSModel:
         '''
 
         if self.BL:  # -> overwrite d_D but keep d_O
-            self.batt_power, self.batt_eta, self.batt_Crate = specify_battery_data()
+            # self.batt_power, self.batt_eta, self.batt_Crate = specify_battery_data()
 
             if self.hp is None:
                 print("RUNNING HYBRID VRE")
@@ -225,7 +237,7 @@ class NBSModel:
                     lambda_DA_w = self.lambda_DA_w,
                     # model = None,
                     add_batt = self.add_batt,
-                    batt_power = self.batt_power,
+                    batt_power = self.P_batt,
                     batt_eta = self.batt_eta,
                     batt_Crate = self.batt_Crate,
                 )
@@ -276,8 +288,8 @@ class NBSModel:
         #CVaR vars:
         self.zeta_D = self.model.addVar(vtype=GRB.CONTINUOUS, name="zeta_D")
         self.zeta_O = self.model.addVar(vtype=GRB.CONTINUOUS, name="zeta_O")
-        self.eta_D_w = self.model.addVars(self.W, lb=0, vtype=GRB.CONTINUOUS, name="eta_D_w")
-        self.eta_O_w = self.model.addVars(self.W, lb=0, vtype=GRB.CONTINUOUS, name="eta_O_w")
+        self.eta_D_w = self.model.addMVar(self.W, lb=0, vtype=GRB.CONTINUOUS, name="eta_D_w")
+        self.eta_O_w = self.model.addMVar(self.W, lb=0, vtype=GRB.CONTINUOUS, name="eta_O_w")
 
         # Aux vars
         # Utility/profit variables
@@ -301,7 +313,7 @@ class NBSModel:
             lambda_DA_w = self.lambda_DA_w,
             model = self.model,  # 
             add_batt = self.add_batt,
-            batt_power = self.batt_power,
+            batt_power = self.P_batt,
             batt_eta = self.batt_eta,
             batt_Crate = self.batt_Crate,
         )
@@ -309,7 +321,7 @@ class NBSModel:
         # add the vars and cons for batt to NBS BL model formulation
         # and save the new variables for easy access and manipulation
         self.model, self.p_DA, self.SOC, self.y_dch, self.y_ch = hp_BL.build_and_extract_model_no_obj()
-
+#HERE
     def build_profile_vars_constrs(self) -> None:
         '''
         This method builds the variables and constraints that are profile-specific.
@@ -317,8 +329,8 @@ class NBSModel:
         All the other methods are general for a NBS mathematical model.
         '''
         # Utility/profit variables that EXCLUDE the CVaR term
-        self.y_D = self.model.addVars(self.W, vtype=GRB.CONTINUOUS, name="y_D")  # developer profit excluding CVaR
-        self.y_O = self.model.addVars(self.W, vtype=GRB.CONTINUOUS, name="y_O")  # off-taker net utility excluding CVaR
+        self.y_D = self.model.addMVar(self.W, vtype=GRB.CONTINUOUS, name="y_D")  # developer profit excluding CVaR
+        self.y_O = self.model.addMVar(self.W, vtype=GRB.CONTINUOUS, name="y_O")  # off-taker net utility excluding CVaR
 
         # Profile-specific variables
         if self.PPA_profile in ['PaF', 'PaP']:
@@ -393,6 +405,8 @@ class NBSModel:
             self.BL_add_battery_vars_constrs()
 
             # Define the profit excluding CVaR term for the developer
+            '''
+            BEFORE
             self.model.addConstrs((self.y_D[w] ==
                                 gp.quicksum(
                                     # OLD, plain P_DA_w (= forecast in non-negative price hours):
@@ -424,10 +438,85 @@ class NBSModel:
                     >= self.BL_compliance_perc * self.T * self.M
                     for w in range(self.W)),
                     name="c_BL_compliance")
+            '''
+            # for w in range(self.W):
+            #     self.model.addQConstr(
+            #         self.y_D[w] ==
+            #         (self.lambda_DA_w[:, w] * self.p_DA[:, w]).sum()
+            #         + ((self.S - self.lambda_DA_w[:, w]) * self.M).sum(),
+            #         name=f"c_yD_link_BL[{w}]"
+            #     )
+            # self.model.addQConstr(self.y_D ==
+            #                         # OLD, plain P_DA_w (= forecast in non-negative price hours):
+            #                         # self.lambda_DA_w[t,w] * self.P_DA_w[t,w]  # DA revenues
+            #                         # NEW, p_DA optimized with BESS
+            #                         ((self.lambda_DA_w * self.p_DA).sum(axis=0)  # DA revenues
+            #                         + ((self.S - self.lambda_DA_w) * self.M).sum(axis=0)),  # BL PPA revenues
+            #                         name='c_yD_link_BL')
+            # self.model.addQConstr(self.y_O ==
+            #                         (self.L_t * (self.WTP - self.lambda_DA_w)).sum(axis=0)  # Costs in DA
+            #                         - (self.M * (self.S - self.lambda_DA_w)).sum(axis=0),  # Costs in BL PPA
+            #                         name='c_yO_link_BL')
+            self.Z = self.model.addVar(vtype=GRB.CONTINUOUS, name="Z")
+            self.model.addQConstr(self.Z == self.S * self.M, name="aux_PPA_product")
+            '''
+            self.M_aux = self.model.addMVar(1, vtype=GRB.CONTINUOUS, name="M_auxMvar")
+            self.model.addConstr(self.M == self.M_aux, name="c_aux_M")
+            self.WTP_aux = self.model.addMVar(1, vtype=GRB.CONTINUOUS, name="WTP_auxMvar")
+            self.model.addConstr(self.WTP_aux == self.WTP, name="c_aux_WTP")
+            '''
+            self.model.addConstr(self.y_D
+                                 ==
+                                 (self.lambda_DA_w * self.p_DA).sum(axis=0)  # DA revenues
+                                 + self.Z * self.T - (self.M * self.lambda_DA_w).sum(axis=0),  # BL PPA revenues
+                                 name='c_yD_link_BL')
+            # OLD formulation due to bugs :(
+            self.model.addConstrs((self.y_O[w] ==
+                                gp.quicksum(
+                                    (self.L_t.ravel()[t] * (self.WTP - self.lambda_DA_w[t,w])  # Costs in DA
+                                    - self.M * (self.S - self.lambda_DA_w[t,w]))  # Costs in BL PPA
+                                    for t in range(self.T)
+                                ) for w in range(self.W)), name='c_yO_link_BL'
+            )
+            # Add auxiliary variable for the DA costs of the buyer so that
+            # we can use vectorized formuation of the total expected net utility of the buyer:
+            # "(self.L_t * (self.WTP - self.lambda_DA_w)).sum(axis=0)" is not allowed in y_O constraint.
+            # self.model.addConstrs((self.y_O[w] ==
+            #                     gp.quicksum(
+            #                         (self.L_t.ravel()[t] * (self.WTP - self.lambda_DA_w[t,w])  # Costs in DA
+            #                         - self.M * (self.S - self.lambda_DA_w[t,w]))  # Costs in BL PPA
+            #                         for t in range(self.T)
+            #                     ) for w in range(self.W)), name='c_yO_link_BL')
+            # self.model.addConstr(self.y_O
+            #                      ==
+            #                      (self.L_t * (self.WTP_aux - self.lambda_DA_w)).sum(axis=0)
+            #                      - self.Z * self.T - self.M_aux * self.lambda_DA_w.sum(axis=0))
+            # self.buyer_DA_costs = self.model.addMVar(self.W, lb=0,vtype=GRB.CONTINUOUS, name="buyer_DA_costs")
+            # self.WTP_fake = self.model.addMVar(1, lb=0, vtype=GRB.CONTINUOUS, name="WTP_fake")
+            # self.model.addConstr(self.buyer_DA_costs == (self.L_t * (self.WTP_fake - self.lambda_DA_w)).sum(axis=0))
+            # self.model.addConstr(self.y_O
+            #                      ==
+            #                      self.buyer_DA_costs  # Costs in DA by scenario
+            #                      - self.Z * self.T + (self.M * self.lambda_DA_w).sum(axis=0),  # Costs in BL PPA
+            #                      ,name='c_yO_link_BL')
+            # further, add compliance:
+            if self.BL_compliance_perc > 0:
+                # v_min is the BL volume matched by the producer on hourly basis
+                self.model.addConstr(self.v_min <= self.p_DA,
+                                     name="c_v_min__p_DA")
+                # the producer cannot compensate for hours of low-compliance by exceeding the BL volume in other hours.
+                self.model.addConstr(self.v_min <= self.M,
+                                     name="c_v_min__M")
+                # the annual compliance-volume
+                self.model.addConstr(
+                    self.v_min.sum(axis=0)
+                    >=
+                    self.BL_compliance_perc * self.T * self.M,
+                    name="c_BL_compliance")
 
         else:
             raise Exception(f"{self.PPA_profile} is not a valid profile type. Please choose 'PaF', 'PaP', 'BL', or 'BL-COMPLIANCE'." )
-
+#HERE
     def build_aux_constrs(self) -> None:
         # Linear linking constraints
         self.model.addConstr(self.x_D == self.u_D - self.d_D, name="c_diff_D")
@@ -440,54 +529,35 @@ class NBSModel:
 
         # Add aux constraints to make obj readable
         self.model.addConstr(self.u_D
-                        == (1 - self.beta_D) * gp.quicksum(  # Expected profit
-                            self.PROB_w[w] * #gp.quicksum(
-                                self.y_D[w]
-                                #for t in range(self.T)
-                            #) 
-                            for w in range(self.W)
-                        )
-                        + self.beta_D * (  # The CVaR term
-                            self.zeta_D - 1/(1-self.alpha) * gp.quicksum(
-                                self.PROB_w[w] * self.eta_D_w[w]
-                                for w in range(self.W)
-                            )  
+                        ==
+                        (1 - self.beta_D)
+                        * (self.PROB_w * self.y_D).sum()  # Expected profit
+                        + self.beta_D
+                        * (self.zeta_D  # The CVaR term
+                           - 1/(1-self.alpha)
+                           * (self.PROB_w * self.eta_D_w).sum()
                         ),
                         name='c_uD')
 
         self.model.addConstr(self.u_O
-                        == (1 - self.beta_O) * gp.quicksum( # Expected net utility
-                            self.PROB_w[w] * #gp.quicksum(
-                                self.y_O[w]
-                                #for t in range(self.T)
-                            #)
-                            for w in range(self.W)
-                        )
-                        + self.beta_O * (  # The CVaR term,
-                            self.zeta_O - 1/(1-self.alpha) * gp.quicksum(
-                                    self.PROB_w[w] * self.eta_O_w[w]
-                                for w in range(self.W)
-                            )
+                        ==
+                        (1 - self.beta_O) * (self.PROB_w * self.y_O).sum()  # Expected net utility
+                        + self.beta_O
+                        * (self.zeta_O  # The CVaR term,
+                           - 1/(1-self.alpha)
+                           * (self.PROB_w * self.eta_O_w).sum()
                         ),
                         name='c_uO')
-
+#HERE
     def build_cvar_constrs(self) -> None:
-        self.model.addConstrs((self.eta_D_w[w]
+        self.model.addConstr(self.eta_D_w
                         >=
-                        self.zeta_D - #gp.quicksum(
-                                self.y_D[w]  # Developer profit in scenario w (excl. CVaR term)
-                                #for t in range(self.T)
-                        #)
-                        for w in range(self.W)),
+                        self.zeta_D - self.y_D,  # Developer profit in scenario w (excl. CVaR term)
                         name='c_CVaR_D')
 
-        self.model.addConstrs((self.eta_O_w[w]
+        self.model.addConstr(self.eta_O_w
                         >=
-                        self.zeta_O - #gp.quicksum(
-                                self.y_O[w]  # Off-taker utility in scenario w (excl. CVaR term)
-                                #for t in range(self.T)
-                        #)
-                        for w in range(self.W)),
+                        self.zeta_O - self.y_O,  # Off-taker utility in scenario w (excl. CVaR term)   
                         name='c_CVaR_O')
 
     def build_objective(self) -> None:
@@ -507,6 +577,7 @@ class NBSModel:
     def solve_model(self) -> None:
         self.model.Params.NonConvex = 2  # Enable non-convex solver
         self.model.write("NBS.lp")
+        self.model.setParam("TimeLimit", 300)  # in seconds
         self.model.optimize()
         
         # save a specific result
@@ -646,6 +717,9 @@ class NBSMultModel:
         PPA_profile: str = 'BL',  # Type of PPA profile ('BL' or 'PaP')
         BL_compliance_perc : float = 0, # indicates the enforced compliance of the producer: meaning the % of PPA volume where the producer has to match the BL volume on an hourly basis
         P_fore_w : np.ndarray = None,
+        P_batt : float = 1.0,
+        batt_eta : float = float(np.sqrt(0.9)),
+        batt_Crate : float = 1.0,
         L_t : np.ndarray = None,
         lambda_DA_w : np.ndarray = None,
         WTP : float = 0,
@@ -674,6 +748,9 @@ class NBSMultModel:
             self.BL_compliance_perc = BL_compliance_perc
 
         self.P_fore_w = P_fore_w
+        self.P_batt = P_batt
+        self.batt_eta = batt_eta
+        self.batt_Crate = batt_Crate
         self.L_t = L_t
         self.lambda_DA_w = lambda_DA_w
         self.WTP = WTP
@@ -722,6 +799,9 @@ class NBSMultModel:
                     PPA_profile=self.PPA_profile,  # BL or PaP
                     BL_compliance_perc=self.BL_compliance_perc,
                     P_fore_w=self.P_fore_w,
+                    P_batt = self.P_batt,
+                    batt_eta=self.batt_eta,
+                    batt_Crate=self.batt_Crate,
                     L_t=self.L_t,
                     lambda_DA_w=self.lambda_DA_w,
                     WTP=self.WTP,
@@ -749,6 +829,12 @@ class NBSMultModel:
                         results_volume[beta_O][beta_D] = nbs_model.M.X
                     elif nbs_model.PPA_profile in ['PaF', 'PaP']:
                         results_volume[beta_O][beta_D] = nbs_model.gamma.X
+                elif nbs_model.model.status == GRB.TIME_LIMIT:
+                    if nbs_model.BL:
+                        vol = nbs_model.M.X
+                    else:
+                        vol = nbs_model.gamma.X
+                    self.nbs_mult_logger.info(f"Stopped due to time limit: S: {nbs_model.S.X:.2f}, M/gamma: {vol:.2f}")
                 else:
                     results_S[beta_O][beta_D] = np.nan
                     results_volume[beta_O][beta_D] = np.nan
@@ -782,6 +868,7 @@ class NBSMultModel:
 
 #%%
 if __name__ == "__main__":
+    t0 = time.time()
     # Fixed parameters:
     alpha = 0.8  # CVaR: tail of interest
 
@@ -793,18 +880,22 @@ if __name__ == "__main__":
 
     # Profile type
     PPA_profile = 'BL'
-    BL_compliance_perc = 0.8
+    BL_compliance_perc = 0.0
 
     # Define ranges for betas
-    beta_D_list = np.round(np.arange(0.0, 0.91, 0.2), 2)  # avoid floating point issues
-    beta_O_list = np.round(np.arange(0.0, 0.91, 0.2), 2)  # avoid floating point issues
+    beta_D_list = np.round(np.arange(0.0, 0.9, 0.2), 2)  # avoid floating point issues
+    beta_O_list = np.round(np.arange(0.0, 0.9, 0.2), 2)  # avoid floating point issues
 
     P_fore_w, lambda_DA_w, L_t, WTP = generate_data()
+    P_batt, batt_eta, batt_Crate = specify_battery_data()
 
     runner = NBSMultModel(
         PPA_profile=PPA_profile,  # Type of PPA profile ('PaF', 'PaP', or 'BL')
         BL_compliance_perc=BL_compliance_perc, # indicates the enforced compliance of the producer: meaning the % of PPA volume where the producer has to match the BL volume on an hourly basis
         P_fore_w=P_fore_w,
+        P_batt=P_batt,
+        batt_eta=batt_eta,
+        batt_Crate=batt_Crate,
         L_t=L_t,
         lambda_DA_w=lambda_DA_w,
         WTP=WTP,
@@ -833,3 +924,4 @@ if __name__ == "__main__":
     d.visualize_example_outcome()
     d.visualize_example_profit_hists()
     d.verify_behaviour()
+    print(f"Total time elapsed: {time.time()-t0:.2f}")

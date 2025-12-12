@@ -71,6 +71,7 @@ class NBSRunner:
             x_wind_on=0.3,
             x_wind_off=0.3,
             y_batt=self.y_batt,  # p_batt/p_vre,
+            batt_eta=float(np.sqrt(0.9)),
             batt_Crate=1,
             E_buyer=self.E_buyer,  # MWh
             WTP=self.data.voll_classic,  # €/MWh
@@ -108,6 +109,9 @@ class NBSRunner:
             BL_compliance_perc=self.BL_compliance_rate,
             P_fore_w=(self.ppa_calcs.P_fore_w_red if self.reduce_number_of_weeks
                       else self.ppa_calcs.P_fore_w),
+            P_batt=self.ppa_calcs.P_batt,
+            batt_eta=self.ppa_data.batt_eta,
+            batt_Crate=self.ppa_data.batt_Crate,
             L_t=(self.ppa_calcs.B_fore_arr_red if self.reduce_number_of_weeks
                  else self.ppa_calcs.B_fore_arr),
             lambda_DA_w=(self.ppa_calcs.lambda_DA_w_red if self.reduce_number_of_weeks
@@ -140,6 +144,9 @@ class NBSRunner:
             PPA_profile=self.PPA_profile,  # Type of PPA profile ('PaF', 'PaP', or 'BL')
             BL_compliance_perc=self.BL_compliance_rate, # indicates the enforced compliance of the producer: meaning the % of PPA volume where the producer has to match the BL volume on an hourly basis
             P_fore_w=self.ppa_calcs.P_fore_w, #[:up_to, :],
+            P_batt=self.ppa_calcs.P_batt,
+            batt_eta=self.ppa_data.batt_eta,
+            batt_Crate=self.ppa_data.batt_Crate,
             L_t=self.ppa_calcs.B_fore_arr, #[:up_to],
             lambda_DA_w=self.ppa_calcs.lambda_DA_w, #[:up_to, :],
             WTP=self.ppa_data.WTP,
@@ -164,7 +171,7 @@ if __name__=="__main__":
     t0 = time.time()
     # Setup hyperparameters
     PPA_profile = "BL"
-    BL_compliance_perc = 0.1
+    BL_compliance_perc = 0.0
     PPA_zone = "DELU"
     
     # Setup file paths
@@ -174,12 +181,12 @@ if __name__=="__main__":
     P_vre = 1  # MW
     E_buyer = 0.4*8760  # MWh
     y_batt = 0.25  # MW_batt / MW_VRE
-    S_UB = 150  # €/MWh
+    S_UB = 50  # €/MWh
 
     # Instantiate objects and load power price results from DA market model
     nbs_runner = NBSRunner(
                     PPA_profile=PPA_profile,
-                    reduce_number_of_weeks=True,
+                    reduce_number_of_weeks=False,
                     BL_compliance_rate=BL_compliance_perc,
                     PPA_zone=PPA_zone,
                     simulation_path=simulation_path,
@@ -192,8 +199,8 @@ if __name__=="__main__":
     # nbs_runner.single_nbs()
 
     # Define ranges for betas
-    beta_D_list = np.round(np.arange(0.05, 1.01, 0.2), 2)  # avoid floating point issues
-    beta_O_list = np.round(np.arange(0.05, 1.01, 0.2), 2)  # avoid floating point issues
+    beta_D_list = np.round(np.arange(0.1, 0.71, 0.2), 2)  # avoid floating point issues
+    beta_O_list = np.round(np.arange(0.1, 0.71, 0.2), 2)  # avoid floating point issues
     nbs_runner.mult_nbs(beta_O_list=beta_O_list,
                         beta_D_list=beta_D_list)
 

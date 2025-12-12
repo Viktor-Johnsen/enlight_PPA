@@ -6,10 +6,11 @@ import matplotlib.pyplot as plt
 import time
 
 slow = False
+fastest = True
 
 def initialize_data():
     np.random.seed(42)  # for reproducibility
-    num_days = 365
+    num_days = 1
     T=num_days * 24
     W=10
     dist = 0.5*np.random.weibull(1.5, size=(T, W))
@@ -113,7 +114,7 @@ class HybridVRE:
                                                 for w in range(self.W)),
                                                 name="pow_bal")
         # 30x faster:
-        else:
+        elif not fastest:
             for w in range(self.W):
                 # Add initial battery SOC constraint
                 lhs1 = self.SOC[0, w].item()
@@ -134,6 +135,22 @@ class HybridVRE:
                     rhs3 = self.P_fore_w[t, w] + self.y_dch[t, w].item()
                     self.model.addConstr(lhs3 <= rhs3, name=f"pow_bal_{w}")
 
+        else:  # fastest formulation: matrices
+            print("Using matrix CONS")
+            self.model.addConstr(self.SOC[0] == 0,
+                                 name="InitialSOC")
+
+            self.model.addConstr(self.SOC[1:] - self.SOC[:-1]
+                                 ==
+                                 self.y_ch[:-1] * self.batt_eta
+                                 - self.y_dch[:-1] / self.batt_eta,
+                                 name="BattBal")
+            
+            self.model.addConstr(self.p_DA + self.y_ch
+                                 <=
+                                 self.P_fore_w + self.y_dch,
+                                 name="PowBal")
+
     def build_obj(self) -> None:
         if slow:
             self.model.setObjective(
@@ -144,13 +161,22 @@ class HybridVRE:
                     for w in range(self.W)),
                 sense=GRB.MAXIMIZE
             )
-        else: # 10x faster formulation
+        elif not fastest: # 10x faster formulation
             obj = gp.LinExpr()
             for t in range(self.T):
                     for w in range(self.W):
                         obj.add(self.PROB_w[w]
                                 * self.p_DA[t, w].item() * self.lambda_DA_w[t, w])
             self.model.setObjective(obj, GRB.MAXIMIZE)
+        
+        else:  # np formulation
+            print("Using np OBJ")
+            self.model.setObjective(expr=(
+                self.PROB_w.reshape(1,self.W)
+                * self.p_DA
+                * self.lambda_DA_w
+                ).sum(),
+                sense=GRB.MAXIMIZE)
 
     def build_model(self) -> None:
         self.model = gp.Model("model")
@@ -162,7 +188,6 @@ class HybridVRE:
         self.build_cons()
         self.time_obj = time.time()
         self.build_obj()
-        self.build_f = time.time()
 
     def build_and_extract_model_no_obj(self) -> gp.Model:
         if self.model is None:
@@ -186,7 +211,7 @@ class HybridVRE:
 
         self.results_dfs = results_dfs
 
-    def plot_results(self, scenario: int) -> None:
+    def plot_results(self, scenario: int, plot_hours : range = np.arange(72)) -> None:
         w = scenario
 
         fig, ax = plt.subplots(figsize=(10,6))
@@ -195,11 +220,11 @@ class HybridVRE:
         if not hasattr(self, 'results_df'):
             self.get_results()
         
-        ax.plot(self.P_fore_w[:, w], label="P_fore")
-        (self.results_dfs['p_DA'] + self.results_dfs['y_ch']).loc[:, w].plot(ax=ax, label="p_DA + y_ch", ls='--', alpha=.8)
-        self.results_dfs['p_DA'].loc[:, w].plot(ax=ax, ls='--', alpha=.5, label="p_DA")
-        self.results_dfs['SOC'].loc[:, w].plot(ax=ax, ls=':', alpha=.3, label="SOC")
-        ax2.plot(self.lambda_DA_w[:, w], label="DA prices", c='k')
+        ax.plot(self.P_fore_w[plot_hours, w], label="P_fore")
+        (self.results_dfs['p_DA'] + self.results_dfs['y_ch']).loc[plot_hours, w].plot(ax=ax, label="p_DA + y_ch", ls='--', alpha=.8)
+        self.results_dfs['p_DA'].loc[plot_hours, w].plot(ax=ax, ls='--', alpha=.5, label="p_DA")
+        self.results_dfs['SOC'].loc[plot_hours, w].plot(ax=ax, ls=':', alpha=.3, label="SOC")
+        ax2.plot(self.lambda_DA_w[plot_hours, w], label="DA prices", c='k')
         ax.legend(loc='upper left')
         ax2.legend(loc='upper right')
         plt.title(f"Scenario {w} results")
@@ -221,7 +246,9 @@ if __name__ == "__main__":
         batt_Crate = 1,
     )
     hp.build_model()
+    tb = time.time()
     hp.run_model()
+    tr = time.time()
     hp.get_results()
     w=3
     hp.plot_results(scenario=w)
@@ -254,8 +281,9 @@ if __name__ == "__main__":
     print("d_D:", d_D)
     print(f"ObjVal: {hp.model.ObjVal:.2f}")
     tf = time.time()
-    print("Init: ", hp.time_vars - time0)
-    print("Var building: ", hp.time_cons - hp.time_vars)
-    print("Cons building: ", hp.time_obj - hp.time_cons)
-    print("Obj building: ", hp.build_f - hp.time_obj)
-    print("Get res + plot: ", tf - hp.build_f)
+    print(f"\nInit: {hp.time_vars - time0:.2f} s")
+    print(f"Var building: {hp.time_cons - hp.time_vars:.2f} s")
+    print(f"Cons building: {hp.time_obj - hp.time_cons:.2f} s")
+    print(f"Obj building: {tb - hp.time_obj:.2f} s")
+    print(f"Model solving: {tr-tb:.2f} s")
+    print(f"Get res + plot: {tf - tr:.2f} s")
