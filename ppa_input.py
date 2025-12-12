@@ -115,6 +115,7 @@ class PPAInputData:
     x_wind_off : float = 0  # -, share of offshore wind
     y_batt : float = 0.25 # -, battery power ratio to VRE: P_batt/P_VRE
     batt_Crate : float = 1  # -, battery C-rate to determine energy capacity
+    batt_eta : float = float(np.sqrt(0.9))
 
     # Buyer specs
     E_buyer : float = 2000  # MWh, buyer total annual electricity consumption
@@ -477,6 +478,9 @@ if __name__=="__main__":
         PPA_profile=PPA_profile,
         BL_compliance_perc=BL_compliance_rate,
         P_fore_w=ppa_calcs.P_fore_w_red, #[:8736,:], # -> used to verify that FREQ_hours has been implemented correctly
+        P_batt=ppa_calcs.P_batt,
+        batt_eta=ppa_data.batt_eta,
+        batt_Crate=ppa_data.batt_Crate,
         L_t=ppa_calcs.B_fore_arr_red, #[:8736],
         lambda_DA_w=ppa_calcs.lambda_DA_w_red, #[:8736, :],
         WTP=ppa_data.WTP,
