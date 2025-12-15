@@ -20,14 +20,16 @@ class EnlightModel:
         L_PtX (int): Number of PtX products
     """
 
-    def __init__(self, dataloader_obj, simulation_path, logger):
+    def __init__(self, dataloader_obj, scenario_name, logger):
         # Initialize logger
         self.logger = logger
         self.data = dataloader_obj
         self.logger.info(
             f"INITIALIZING ENLIGHT MODEL"# FOR WEEK {self.data.week}"
         )
+        self.scenario_name = scenario_name
 
+        simulation_path=Path(f'simulations/{self.scenario_name}')
         self.simulation_path = simulation_path
 
         self.model = linopy.Model()
