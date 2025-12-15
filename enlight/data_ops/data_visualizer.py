@@ -134,7 +134,6 @@ class DataVisualizer:
         profile_dict.pop("demand_inflexible_ev")  # remove unused data
 
         fig, ax = plt.subplots(ncols=2, nrows=len(profile_dict.keys()), figsize=(12,18))
-        
         # used to increase legibility of plot with yearly time series
         alphas = 0.5 + (1-0.5) * np.arange(start=len(self.data.bidding_zones),stop=0,step=-1) / len(self.data.bidding_zones)
 

@@ -91,13 +91,13 @@ class EnlightRunner:
 
     #         self.logger.info(f"{scenario_name} : Data preparation completed.")
 
-    def load_data_single_simulation(self, simulation_path: Path) -> None:
+    def load_data_single_simulation(self, scenario_name : str) -> None:
         # Initialize DataLoader object to be used in EnlightModel:
         self.data = DataLoader(
-            input_path=Path(simulation_path) / 'data',
+            scenario_name=scenario_name,
             logger=self.logger)
 
-    def run_single_simulation(self, simulation_path) -> None:
+    def run_single_simulation(self, scenario_name : str) -> None:
         """
         Run a single simulation and simulation path.
 
@@ -108,7 +108,7 @@ class EnlightRunner:
         # Initialize EnlightModel with the given data object
         self.enlight_model = EnlightModel(
             dataloader_obj=self.data,
-            simulation_path=simulation_path,
+            scenario_name=scenario_name,
             logger=self.logger
         )
         # Run the model
@@ -171,3 +171,23 @@ class EnlightRunner:
     #     # Calls methods
     #     self.data_vis.visualize_NBS_inputs(z0=bidding_zone, prices_path=prices_path)
         
+    def prepare_load_run_single_sim(self, scenario_name):
+        '''
+        A one-stop-shop for quickly loading the input data and
+        running the DA market model, while being sure to use the
+        config specified in the yaml file by automatically also
+        preparing the data anew.
+        '''
+        self.prepare_data_single_scenario(scenario_name=scenario_name)
+        self.load_data_single_simulation(scenario_name=scenario_name)
+        self.run_single_simulation(scenario_name=scenario_name)
+
+    def prepare_load_run_all_sims(self):
+        '''
+        Running the DA market model (with updated config inputs)
+        for all of the scenariios specified in the yaml file.
+        '''
+        for scen in self.scenario_list:
+            self.prepare_load_run_single_sim(scenario_name=scen)
+        # Note that if accessing e.g. runner.data after running this method
+        # then the data is only shown for the last scenario in the list.

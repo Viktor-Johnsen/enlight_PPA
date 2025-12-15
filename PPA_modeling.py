@@ -2,8 +2,10 @@ import numpy as np
 # import pandas as pd
 import linopy
 import matplotlib.pyplot as plt
+from cycler import cycler
 
-def load_plot_configs() -> None:
+
+def load_plot_configs(only_get_palette : bool = False) -> None:
     palette1 = ["#7782f0", "#70e0aa", "#f8dd7a", "#fc9a67", "#f9ccc3", "#ef7a81", "#4ab877", "#a566b5"]
     nature_pastel1 = [
         "#595959",  # soft black / gray
@@ -25,10 +27,15 @@ def load_plot_configs() -> None:
     "#F2A97E",  # light vermillion
     "#E4B5D0",  # light reddish purple
     ]
-    # Set default color palette, font sizes, and font family.
 
+    # Set default color palette, font sizes, and font family.
     # chose palette1 or nature_pastel1
     chosen_palette = nature_pastel1
+
+    # Don't overwrite the plot configs every time loading the palette
+    if only_get_palette:
+        return chosen_palette
+
     plt.rcParams['axes.prop_cycle'] = plt.cycler(color=chosen_palette)  # matplotlib.pyplot
     plt.rcParams.update({
         "font.family": "Arial",
@@ -46,7 +53,7 @@ def load_plot_configs() -> None:
 def unify_palette_cyclers(axs):  # run BEFORE plotting
     if not type(axs) == np.ndarray:
         ax = axs
-        # Shape of subplots of (1,1)
+        # Shape of subplots of (1,1
         ax._get_patches_for_fill = ax._get_lines
         return ax
     else:
@@ -63,7 +70,7 @@ def prettify_subplots(axs):  # run AFTER plotting
         ax.grid(alpha=.25)  # Add opaque gridlines
         ax.margins(0.005)  # Remove whitespace inside each plot
         ax.spines[['bottom','left']].set_alpha(0.5)  # Introduce opacity to the x- and y-axes spines
-        ax.legend(bbox_to_anchor=[1, 1.05])
+        ax.legend(bbox_to_anchor=[1, 1.02])
         return ax
     else:
         for ax in axs:
@@ -71,7 +78,7 @@ def prettify_subplots(axs):  # run AFTER plotting
             ax.grid(alpha=.25)  # Add opaque gridlines
             ax.margins(0.005)  # Remove whitespace inside each plot
             ax.spines[['bottom','left']].set_alpha(0.5)  # Introduce opacity to the x- and y-axes spines
-            ax.legend(bbox_to_anchor=[1, 1.05])
+            ax.legend(bbox_to_anchor=[1, 1.02])
         return axs
 
 def make_negative_DA_price_mask(times, lambda_DA):
@@ -648,7 +655,7 @@ if __name__ == "__main__":
                 PPA_profile=p,
                 BL_enforce_no_charge_in_deficit=(True if p_.endswith('–RESTRICTED_CHARGING') else False),
                 BL_annual_compliance_percentage=(True if p_.endswith('–COMPLIANCE') else False),
-                BL_compliance_perc=0.612,
+                BL_compliance_perc=0.827,
                 add_batt=(True if p in ['BL', 'C-BL', 'AC-BL'] else False)
             )
 

@@ -20,7 +20,7 @@ class DataLoader:
     >>> data = DataLoader(week=1, input_path='simulations/scenario_1/data')
     """
     # week: int
-    input_path: Path
+    scenario_name : str
     logger: Logger
 
     def __post_init__(self):
@@ -28,14 +28,14 @@ class DataLoader:
         Post-initialization to load and validate all required datasets.
         """
         # Initialize logger
+        input_path = Path("simulations") / self.scenario_name / "data"
+        self.input_path = input_path.resolve()
         self.logger.info(
             f"INITIALIZING DATA LOADER FROM {self.input_path}"
         )
-        
-        self.input_path = Path(self.input_path).resolve()
-        
+
         # Load YAML metadata (auxiliary scenario data)
-        self.load_yaml_aux_data('scenario_1_aux_data.yaml')
+        self.load_yaml_aux_data(f'{self.scenario_name}_aux_data.yaml')
         
         # Load CSV datasets
         self.load_generation_data()
