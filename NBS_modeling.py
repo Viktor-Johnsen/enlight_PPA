@@ -7,7 +7,34 @@ import gurobipy as gp
 from gurobipy import GRB
 import enlight.utils as utils
 import hybrid_vre_in_da as hv
+from PPA_modeling import load_plot_configs, unify_palette_cyclers, prettify_subplots
 
+import pandas as pd
+
+###
+def var_to_pandas(var, name=None):
+    """
+    Convert a Gurobi variable (Var or MVar) to pandas object.
+    """
+    if var is None:
+        return None
+
+    # MVar (vector or matrix)
+    if isinstance(var, gp.MVar):
+        arr = var.X
+        if arr.ndim == 1:
+            return pd.Series(arr, name=name)
+        elif arr.ndim == 2:
+            return pd.DataFrame(arr)
+        else:
+            raise ValueError(f"Unsupported MVar dimension: {arr.ndim}")
+
+    # Scalar Var
+    if isinstance(var, gp.Var):
+        return pd.Series({name: var.X})
+
+    raise TypeError(f"Unsupported type: {type(var)}")
+###
 
 def generate_data():
     np.random.seed(42)
@@ -107,7 +134,7 @@ class NBSModel:
         gamma_UB : float = 1, # PaP: Minimum PPA capacity share volume
         beta_D : float = 0.5,  # CVaR: Risk-aversion level of developer
         beta_O : float = 0.5,  # CVaR: Risk-aversion level of off-taker
-        alpha : float = 0.8,  # CVaR: Tail of interest for CVaR
+        alpha : float = 0.75,  # CVaR: Tail of interest for CVaR
         nbs_model_logger : logging.Logger | None = None,
     ) -> None:
     
@@ -159,6 +186,8 @@ class NBSModel:
         self.beta_O = beta_O
         self.alpha = alpha
 
+        self.palette = load_plot_configs(only_get_palette=True)
+
         self.T, self.W = self.P_fore_w.shape
         
         self.calc_aux_data()
@@ -199,6 +228,7 @@ class NBSModel:
 
         self.CP_D = (self.lambda_DA_w * self.P_DA_w).sum()/self.P_DA_w.sum()  # €/MWh - capture price of VRE
         self.eps = 1e-6  # small number to avoid log(0) in the model
+        # self.eps_fake_cycling = 1e-5
 
     def compute_disagreement_points(self) -> None:
         # Default functions : disagreement points
@@ -228,8 +258,6 @@ class NBSModel:
         '''
 
         if self.BL:  # -> overwrite d_D but keep d_O
-            # self.batt_power, self.batt_eta, self.batt_Crate = specify_battery_data()
-
             if self.hp is None:
                 print("RUNNING HYBRID VRE")
                 hp = hv.HybridVRE(
@@ -561,8 +589,8 @@ class NBSModel:
                         name='c_CVaR_O')
 
     def build_objective(self) -> None:
-        self.model.setObjective(self.log_uD_dD + self.log_uO_dO
-                                # - self.eps * gp.quicksum(self.y_ch[t, w] + self.y_dch[t, w] for t in range(self.T) for w in range(self.W))
+        self.model.setObjective(self.log_uD_dD + self.log_uO_dO  # <- actual objective :)
+                                # - (self.y_ch + self.y_dch).sum() * self.eps_fake_cycling  # <- avoid the battery showing "fake cycling"! This does NOT change the solution!!
                                 ,
                                 sense=GRB.MAXIMIZE)
 
@@ -577,51 +605,122 @@ class NBSModel:
     def solve_model(self) -> None:
         self.model.Params.NonConvex = 2  # Enable non-convex solver
         self.model.write("NBS.lp")
-        self.model.setParam("TimeLimit", 300)  # in seconds
+        self.model.setParam("TimeLimit", 240)  # in seconds
         self.model.optimize()
         
         # save a specific result
         if self.BL and self.model.status == GRB.OPTIMAL:
             self.compliance_rates = self.v_min.X.sum(axis=0)/(self.T * self.M.X)
 
-    def visualize_example_outcome(self):
+    def get_results(self) -> dict:
+        vars_to_save = {
+            "S": self.S,
+            "eta_D_w": self.eta_D_w,
+            "log_uD_dD": self.log_uD_dD,
+            "u_D": self.u_D,
+            "x_D": self.x_D,
+            "y_D": self.y_D,
+            "zeta_D": self.zeta_D,
+        }
+        if self.BL:
+            vars_to_save["p_DA"] = self.p_DA
+            vars_to_save["y_ch"] = self.y_ch
+            vars_to_save["y_dch"] = self.y_dch
+            vars_to_save["SOC"] = self.SOC
+            vars_to_save["M"] = self.M
+
+            if self.BL_compliance_perc > 0:
+                vars_to_save["v_min"] = self.v_min
+        else:
+            vars_to_save["gamma"] = self.gamma
+
+        results = {
+            name: var_to_pandas(var, name=name)
+            for name, var in vars_to_save.items()
+        }
+        results["d_D"] = self.d_D
+        results["d_O"] = self.d_O
+
+        return results
+
+    def visualize_example_outcome(self, show_all_scens : bool = False):
         if self.model.status == GRB.OPTIMAL:
+            max_hour_shown = 168
             S_X = self.S.X
-            low_perc = 10
-            high_perc = 90
-
-            fig, ax = plt.subplots(2,1, figsize=(8,10))
-
-            ax[0].plot(perc(self.P_fore_w, 50), label='Median power forecast', color='r', linestyle='-')
-            ax[0].fill_between(range(self.T), perc(self.P_fore_w, low_perc), perc(self.P_fore_w, high_perc), color='r', alpha=0.4, label='Power forecast 10-90 percentile')
-            ax[0].plot(self.L_t, label='Off-taker load profile', color='b', linestyle='-')
-            ax[0].plot(perc(self.P_DA_w, 50), label='Median DA dev. acc. off.', color='g', ls='--')
-
             if self.BL:
                 M_X = self.M.X
-                ax[0].axhline(M_X, color='k', linestyle='-.', alpha=0.7,
-                            label='Agreed BL volume $M$')
             elif self.PPA_profile in ['PaF', 'PaP']:
                 gamma_X = self.gamma.X
-                ax[0].plot(gamma_X * perc(self.P_fore_w, 50), color='k', linestyle='-.', alpha=0.7,
-                        label=r'Agreed PaP volume $\gamma$ (shown as % of median power forecast)')
 
-            ax[0].set_ylabel('Power [MW]')
+            
 
-            ax[1].plot(perc(self.lambda_DA_w, 50), label='Median DA prices', color='r', linestyle='-')
-            ax[1].fill_between(range(self.T), perc(self.lambda_DA_w, low_perc), perc(self.lambda_DA_w, high_perc), color='r', alpha=0.4, label='DA price 10-90 percentile')
-            ax[1].axhline(S_X, color='k', linestyle='-.', label=f'Optimal {self.PPA_profile} PPA strike price $S$')
-            ax[1].set_ylabel('Price [€/MWh]')
+            if show_all_scens:
+                fig, axs = plt.subplots(2,2, figsize=(8,10))
+                axs = axs.flatten()
+                unify_palette_cyclers(axs)
+                for w, ax in enumerate(axs):
+                    ax.plot(self.P_fore_w[:max_hour_shown,w], label='Power forecasts', linestyle='-')
+                    ax.plot(self.P_DA_w[:max_hour_shown,w], label='DA accepted offer', ls='--', alpha=.5)
+                    ax.plot(self.L_t[:max_hour_shown], label='Off-taker load profile', linestyle='-', alpha=.8)
 
-            ax[0].legend()
-            ax[1].legend()
-            plt.suptitle(fr"Off-taker with $\beta^O$={self.beta_O}, and developer with $\beta^D$={self.beta_D}")
-            plt.tight_layout()
+                    if self.BL:
+                        ax.axhline(M_X, color='k', linestyle='-.', alpha=0.7,
+                                   label='Agreed BL volume $M$')
+                    elif self.PPA_profile == 'PaF':
+                        ax.plot(gamma_X * self.P_fore_w[:max_hour_shown,w], color='k', linestyle='-.', alpha=0.3,
+                                label=r'Agreed PaF volume $\gamma$ (P_fore)')
+                    else:
+                        ax.plot(gamma_X * self.P_DA_w[:max_hour_shown,w], color='k', linestyle='-.', alpha=0.3,
+                                label=r'Agreed PaP volume $\gamma$ (P_DA)')
+
+                    if w % 2 == 0:
+                        # Only the first plot in each row needs to have the label:
+                        ax.set_ylabel('Power [MW]')
+                    ax.set_title(f'Scen. {w}: Power generation and consumption', loc='left')
+                prettify_subplots(axs)
+                axs[0].legend_.remove()
+                axs[2].legend_.remove()
+                axs[3].legend_.remove()
+
+
+            else:
+                fig, ax = plt.subplots(figsize=(8,10))
+                unify_palette_cyclers(ax)
+                low_perc = 10
+                high_perc = 90
+                ax.plot(perc(self.P_fore_w, 50)[:max_hour_shown], label='Median power forecast', linestyle='-')
+                ax.fill_between(range(self.T)[:max_hour_shown], perc(self.P_fore_w, low_perc)[:max_hour_shown], perc(self.P_fore_w, high_perc)[:max_hour_shown], alpha=0.4, label='Power forecast 10-90 percentile')
+                ax.plot(perc(self.P_DA_w, 50)[:max_hour_shown], label='Median DA dev. acc. off.', ls='--', alpha=.5)
+                ax.plot(self.L_t[:max_hour_shown], label='Off-taker load profile', linestyle='-', alpha=.8)
+                if self.BL:
+                    ax.axhline(M_X, color='k', linestyle='-.', alpha=0.7,
+                                label='Agreed BL volume $M$')
+                elif self.PPA_profile == 'PaF':
+                    ax.plot(gamma_X * perc(self.P_fore_w, 50)[:max_hour_shown], color='k', linestyle='-.', alpha=0.3,
+                            label=r'Agreed PaF volume $\gamma$ (P_fore)')
+                else:
+                    ax.plot(gamma_X * perc(self.P_DA_w, 50)[:max_hour_shown], color='k', linestyle='-.', alpha=0.3,
+                            label=r'Agreed PaP volume $\gamma$ (P_DA)')
+                prettify_subplots(ax)
+            plt.show()
+
+            fig, ax = plt.subplots(figsize=(8,10))
+            unify_palette_cyclers(ax)
+            if show_all_scens:
+                for i, w in enumerate(range(self.W)):
+                    ax.plot(self.lambda_DA_w[:max_hour_shown,w], linestyle='-')
+            else:
+                ax.plot(perc(self.lambda_DA_w, 50)[:max_hour_shown], label='Median DA prices', alpha=.65, linestyle='-')
+                ax.fill_between(range(self.T)[:max_hour_shown], perc(self.lambda_DA_w, low_perc)[:max_hour_shown], perc(self.lambda_DA_w, high_perc)[:max_hour_shown], alpha=0.4, label='DA price 10-90 percentile')
+            ax.axhline(S_X, color='k', linestyle='-.', label=f'Optimal {self.PPA_profile} PPA strike price $S$')
+            ax.set_ylabel('Price [€/MWh]')
+            ax.set_title(fr"DA prices\nOff-taker with $\beta^O$={self.beta_O}, and developer with $\beta^D$={self.beta_D}", loc='left')
+            prettify_subplots(ax)
             plt.show()
         else:
             print("No results to show. No optimal solution was found.")
 
-    def visualize_example_profit_hists(self):
+    def visualize_example_profit_dist(self, bars=False):
         if self.model.status == GRB.OPTIMAL:
 
             # # Compare their revenues distributions before and after
@@ -632,78 +731,122 @@ class NBSModel:
             # VaR_D = self.models[beta_O_chosen][beta_D_chosen].VAR_D
             # VaR_O = self.models[beta_O_chosen][beta_D_chosen].VAR_O
             # Expected DA + PPA revenues
-            PI_D_w_NBS = [self.y_D[w].X for w in range(self.W)]
-            PI_O_w_NBS = [self.y_O[w].X for w in range(self.W)]
+            power_costs_O_w = self.PI_O_w - (self.L_t * self.WTP).sum()
+            power_costs_O_w_NBS = self.y_O.X - (self.L_t * self.WTP).sum()
+            VAR_O_power_costs = self.VAR_O - (self.L_t * self.WTP).sum()
+            zeta_O_power_costs = self.zeta_O.X - (self.L_t * self.WTP).sum()
             # VaR after PPA
             # zeta_D = self.models[beta_O_chosen][beta_D_chosen].zeta_D.X
             # zeta_O = self.models[beta_O_chosen][beta_D_chosen].zeta_O.X
-
+            '''For debugging purposes, save as attrs:'''
+            self.power_costs_O_w = power_costs_O_w
+            self.power_costs_O_w_NBS =  power_costs_O_w_NBS
+            self.VAR_O_power_costs = VAR_O_power_costs
+            self.zeta_O_power_costs = zeta_O_power_costs 
 
             fig, ax = plt.subplots(1, 2, figsize=(8,6))
-            ax[0].hist(self.PI_D_w, color='r', alpha=0.5, label='Before')
-            ax[0].axvline(x=self.VAR_D, color='r', linestyle='--', label='VaR before')
-            ax[1].hist(self.PI_O_w, color='r', alpha=0.5, label='Before')
-            ax[1].axvline(x=self.VAR_O, color='r', linestyle='--', label='VaR before')
+            unify_palette_cyclers(ax)
 
-            # PI_D_w_NBS = (nbs_.lambda_DA_w * nbs_.P_DA_w + (S_X - nbs_.lambda_DA_w) * M.X).sum(axis=0)
-            # PI_O_w_NBS = ( (nbs_.WTP - nbs_.lambda_DA_w) * nbs_.L_t - (S_X - nbs_.lambda_DA_w) * M.X).sum(axis=0)
-            ax[0].hist(PI_D_w_NBS, color='b', alpha=0.5, label='after NBS')
-            ax[0].axvline(x=self.zeta_D.X, color='b', linestyle='--', label='VaR after')
-            ax[1].hist(PI_O_w_NBS, color='b', alpha=0.5, label='after NBS')
-            ax[1].axvline(x=self.zeta_O.X, color='b', linestyle='--', label='VaR after')
+            w_idx = np.arange(1, self.W+1)
+            bar_width = 0.35
 
-            ax[0].set_title(fr"Developer with $\beta^D=${self.beta_D}")
-            ax[0].legend()
-            ax[1].set_title(fr"Off-taker with $\beta^O=${self.beta_O}")
-            ax[1].legend()
+            if bars:
+                # --- Developer ---
+                ax[0].bar(w_idx - bar_width/2, self.PI_D_w,
+                        width=bar_width, alpha=0.6, label="Before")
+                ax[0].bar(w_idx + bar_width/2, self.y_D.X,
+                        width=bar_width, alpha=0.6, label="After PPA")
+                ax[0].bar(x=w_idx + bar_width/2, height=self.eta_D_w.X,
+                          bottom=self.y_D.X, width=bar_width, alpha=0.6, label="CVaR weight")
+                ax[0].axhline(self.VAR_D, ls="--", label="VaR before")
+                ax[0].axhline(self.zeta_D.X, ls="-.", label="VaR after")
+
+                # --- Off-taker ---
+                ax[1].bar(w_idx - bar_width/2, power_costs_O_w,
+                        width=bar_width, alpha=0.6, label="Before")
+                ax[1].bar(w_idx + bar_width/2, power_costs_O_w_NBS,
+                        width=bar_width, alpha=0.6, label="After PPA")
+                ax[1].bar(x=w_idx + bar_width/2, height=self.eta_O_w.X,
+                          bottom=power_costs_O_w_NBS, width=bar_width, alpha=0.6, label="CVaR weight")
+                ax[1].axhline(VAR_O_power_costs, ls="--", label="VaR before")
+                if self.beta_O == 0:
+                    ax[1].axhline(self.zeta_O.X, ls="-.", label="VaR after")
+                else:
+                    ax[1].axhline(zeta_O_power_costs, ls="-.", label="VaR after")
+                ax[1].set_title(fr"Off-taker POWER COSTS (no WTP) – $\beta^O=${self.beta_O}")
+            else:  # histogram
+                ax[0].hist(self.PI_D_w, color='r', alpha=0.5, label='Before')
+                ax[0].axvline(x=self.VAR_D, color='r', linestyle='--', label='VaR before')
+                ax[1].hist(self.PI_O_w, color='r', alpha=0.5, label='Before')
+                ax[1].axvline(x=self.VAR_O, color='r', linestyle='--', label='VaR before')
+
+                # PI_D_w_NBS = (nbs_.lambda_DA_w * nbs_.P_DA_w + (S_X - nbs_.lambda_DA_w) * M.X).sum(axis=0)
+                # PI_O_w_NBS = ( (nbs_.WTP - nbs_.lambda_DA_w) * nbs_.L_t - (S_X - nbs_.lambda_DA_w) * M.X).sum(axis=0)
+                ax[0].hist(self.y_D.X, alpha=0.5, label='after PPA')
+                ax[0].axvline(x=self.zeta_D.X, linestyle='--', label='VaR after')
+                ax[1].hist(self.y_O.X, alpha=0.5, label='after PPA')
+                ax[1].axvline(x=self.zeta_O.X, linestyle='--', label='VaR after')
+                ax[1].set_title(fr"Off-taker UTILITY – $\beta^O=${self.beta_O}")
+
+            ax[0].set_title(fr"Developer PROFITS – $\beta^D=${self.beta_D}")
+            prettify_subplots(ax)
+            ax[0].legend_.remove()
+            for ax_ in ax:
+                ax_.set_xlabel("Scenario")
+            ax[0].set_ylabel("Profit or costs [€]")
+            plt.tight_layout()
             plt.show()
         else:
             print("No results to show. No optimal solution was found.")
      
-    def verify_behaviour(self, w_BESS=3):
+    def verify_behaviour(self, w_BESS=3, hours_shown = range(0,168)):
         if self.model.status == GRB.OPTIMAL:
-
             # Verify behaviour of p_DA and p_PPA. If lambda_DA >= 0 in all hour-scenarios, then we should always max out both!!
             if self.PPA_profile == 'PaP':
-                for i in range(d.W)[:4]:
+                for i in range(self.W)[:4]:
                     fig, ax = plt.subplots(figsize=(10,6))
+                    unify_palette_cyclers(ax)
                     ax2 = ax.twinx()
+                    unify_palette_cyclers(ax2)
 
                     # Plot and compare total power available and offered
                     # ax.plot(d.P_DA_w[:,i], alpha=.7, label=r"$\overline{P}^{DA}$")
-                    ax.plot(self.P_fore_w[:,i], ls='-', alpha=.5, lw=3, label=r"$P^{fore}$")
-                    ax.plot((1-self.gamma.X) * self.P_DA_w[:,i] + self.p_PPA.X[:,i], ls=':', alpha=.5, label=r"$P^{DA} + p^{PPA}$")
+                    ax.plot(self.P_fore_w[hours_shown, i], ls='-', alpha=.5, lw=3, label=r"$P^{fore}$")
+                    ax.plot((1-self.gamma.X) * self.P_DA_w[hours_shown, i] + self.gamma.X * self.P_DA_w[:max_hour_shown,i], ls=':', alpha=.5, label=r"$P^{DA} + p^{PPA}$")
 
                     # Plot and compare the power available and offered & remunerated at DA price
-                    ax.plot((1-self.gamma.X) * self.P_fore_w[:, i], alpha=.3, lw=3, label=r"$\left(1-\gamma\right) \cdot P^{fore}$")
-                    ax.plot((1-self.gamma.X) * self.P_DA_w[:,i], alpha=.5, ls='--', label=r"$P^{DA}$")
+                    ax.plot((1-self.gamma.X) * self.P_fore_w[hours_shown, i], alpha=.3, lw=3, label=r"$\left(1-\gamma\right) \cdot P^{fore}$")
+                    ax.plot((1-self.gamma.X) * self.P_DA_w[hours_shown, i], alpha=.5, ls='--', label=r"$P^{DA}$")
 
                     # Plot and compare power available for PPA and offered to comply with PPA
-                    ax.plot(self.gamma.X * self.P_fore_w[:,i], alpha=.3, lw=3, label=r"$\gamma \cdot P^{fore}$")
-                    ax.plot(self.p_PPA.X[:,i], alpha=.5, ls='--', label=r"$p^{PPA}$")
+                    ax.plot(self.gamma.X * self.P_fore_w[hours_shown, i], alpha=.3, lw=3, label=r"$\gamma \cdot P^{fore}$")
+                    ax.plot(self.gamma.X * self.P_DA_w[hours_shown, i], alpha=.5, ls='--', label=r"$p^{PPA}$")
 
                     # ax.plot(d.L_t, label=r"$L$")
                     # ax2.plot(d.lambda_DA_w[:, i], ls=':', c='k', label=r'$\lambda^{DA}$')
                     # ax2.axhline(d.S.X, c='k', label="S")
-                    ax.legend(loc='upper left')
                     # ax2.legend(loc='upper right')
                     ax.set_title(f"w = {i}")
+                    prettify_subplots(ax)
+                    prettify_subplots(ax2)
                     plt.show()
 
             elif self.BL:
                 # inspect the BESS behaviour to verify that HybridVRE has been correctly included in this model.
-                w_BESS=3
-                plt.plot(self.P_fore_w[:, w_BESS], label="P_fore")
-                plt.plot((self.p_DA.X + self.y_ch.X)[:, w_BESS], label="p_DA + y_ch", ls='--')
-                plt.plot(self.p_DA.X[:, w_BESS], label="p_DA", ls='--', alpha=.5)
+                fig, ax = plt.subplots(figsize=(10,6))
+                unify_palette_cyclers(ax)
+
+                ax.plot(self.P_fore_w[hours_shown, w_BESS], label="P_fore")
+                ax.plot((self.p_DA.X + self.y_ch.X)[hours_shown, w_BESS], label="p_DA + y_ch", ls='--')
+                ax.plot(self.p_DA.X[hours_shown, w_BESS], label="p_DA", ls='--', alpha=.5)
                 if self.BL_compliance_perc > 0:
-                    plt.plot(self.v_min.X[:, w_BESS], label="v_min", c='r', alpha=.5)
-                plt.plot(self.SOC.X[:, w_BESS], label="SOC", ls=':', alpha=0.3)
-                plt.axhline(self.M.X, c='k', label="BL volume", alpha=.4)
-                plt.legend()
+                    ax.plot(self.v_min.X[hours_shown, w_BESS], label="v_min", c='r', alpha=.5)
+                ax.plot(self.SOC.X[hours_shown, w_BESS], label="SOC", ls=':', alpha=0.3)
+                ax.axhline(self.M.X, c='k', label="BL volume", alpha=.4)
                 if self.beta_D == 1.0:
-                    plt.title(r'Beware! Nonsensical for $\beta_D=1.0$')
+                    ax.set_title(r'Beware! Nonsensical for $\beta_D=1.0$')
                 # plt.plot(d.y_ch.X[: ,w] * d.y_dch.X[: ,w])
+                prettify_subplots(ax)
         else:
             print("No results to show. No optimal solution was found.")
 
@@ -730,7 +873,7 @@ class NBSMultModel:
         M_UB : float = 1,  # BL: Maximum baseload volume
         gamma_LB : float = 0, # PaP: Minimum PPA capacity share volume
         gamma_UB : float = 1, # PaP: Minimum PPA capacity share volume
-        alpha : float = 0.8,  # CVaR: Tail of interest for CVaR
+        alpha : float = 0.75,  # CVaR: Tail of interest for CVaR
         nbs_mult_logger : logging.Logger | None = None
     ) -> None:
         self.nbs_mult_logger = nbs_mult_logger or utils.setup_logging(log_file="nbs.log")
@@ -822,20 +965,21 @@ class NBSMultModel:
                 nbs_model.solve_model()
                 ts = time.time()
                 self.nbs_mult_logger.info(f"Building time: {tb-t0b:.2f}. Solving time: {ts-tb:.2f}.")
+
                 # Save the results of PPA price and volume explicitly if it was solved to optimality.
                 if nbs_model.model.status == GRB.OPTIMAL:
+                    self.nbs_mult_logger.info("Solved to optimality!")
                     results_S[beta_O][beta_D] = nbs_model.S.X
                     if nbs_model.BL:
                         results_volume[beta_O][beta_D] = nbs_model.M.X
                     elif nbs_model.PPA_profile in ['PaF', 'PaP']:
                         results_volume[beta_O][beta_D] = nbs_model.gamma.X
                 elif nbs_model.model.status == GRB.TIME_LIMIT:
-                    if nbs_model.BL:
-                        vol = nbs_model.M.X
-                    else:
-                        vol = nbs_model.gamma.X
-                    self.nbs_mult_logger.info(f"Stopped due to time limit: S: {nbs_model.S.X:.2f}, M/gamma: {vol:.2f}")
+                    self.nbs_mult_logger.info(f"Stopped due to time limit: S: {nbs_model.S.Xn:.2f}")
+                    results_S[beta_O][beta_D] = np.nan
+                    results_volume[beta_O][beta_D] = np.nan
                 else:
+                    self.nbs_mult_logger.info("Model was infeasible or unbounded...")
                     results_S[beta_O][beta_D] = np.nan
                     results_volume[beta_O][beta_D] = np.nan
 
@@ -847,7 +991,7 @@ class NBSMultModel:
         volume_vals = np.array([[self.results_volume[bO][bD] for bD in self.beta_D_list] for bO in self.beta_O_list])
 
         fig, axs = plt.subplots(1, 2, figsize=(12, 5))
-
+        # unify_palette_cyclers(axs)
         im1 = axs[0].imshow(S_vals, origin='lower', cmap='coolwarm',
                             extent=[min(self.beta_D_list), max(self.beta_D_list), min(self.beta_O_list), max(self.beta_O_list)], aspect='auto')
         axs[0].set_title("Strike price (S)")
@@ -862,15 +1006,20 @@ class NBSMultModel:
         axs[1].set_ylabel(r"$\beta_O$")
         fig.colorbar(im2, ax=axs[1])
 
+        prettify_subplots(axs)
+        for ax in axs:
+            ax.grid(False)
+            ax.legend_.remove()
         plt.tight_layout()
         plt.show()
 
 
 #%%
 if __name__ == "__main__":
+    load_plot_configs()
     t0 = time.time()
     # Fixed parameters:
-    alpha = 0.8  # CVaR: tail of interest
+    alpha = 0.75  # CVaR: tail of interest
 
     # Capture price VRE: (d.P_DA_w * d.lambda_DA_w).sum() / d.P_DA_w.sum() = 96.38 €/MWh
     # Capture price load: - (d.L_t * d.lambda_DA_w).sum() / (d.W * d.L_t.sum()) = -98.1 €/MWh
@@ -880,11 +1029,11 @@ if __name__ == "__main__":
 
     # Profile type
     PPA_profile = 'BL'
-    BL_compliance_perc = 0.0
+    BL_compliance_perc = 0.1
 
     # Define ranges for betas
-    beta_D_list = np.round(np.arange(0.0, 0.9, 0.2), 2)  # avoid floating point issues
-    beta_O_list = np.round(np.arange(0.0, 0.9, 0.2), 2)  # avoid floating point issues
+    beta_D_list = np.round(np.arange(0.2, 0.3, 0.2), 2)  # avoid floating point issues
+    beta_O_list = np.round(np.arange(0.2, 0.3, 0.2), 2)  # avoid floating point issues
 
     P_fore_w, lambda_DA_w, L_t, WTP = generate_data()
     P_batt, batt_eta, batt_Crate = specify_battery_data()
@@ -914,14 +1063,14 @@ if __name__ == "__main__":
 
     runner.visualize_risk_impact_heatmap()
 
-    beta_O_chosen=beta_O_list[-1]
-    beta_D_chosen=beta_D_list[1]
+    beta_O_chosen=beta_O_list[0]
+    beta_D_chosen=beta_D_list[0]
 
     # For debugging
     d = runner.models[beta_O_chosen][beta_D_chosen]
     # end
 
     d.visualize_example_outcome()
-    d.visualize_example_profit_hists()
+    d.visualize_example_profit_dist()
     d.verify_behaviour()
     print(f"Total time elapsed: {time.time()-t0:.2f}")

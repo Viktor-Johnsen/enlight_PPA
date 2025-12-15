@@ -30,7 +30,25 @@ def validate_df_positive_numeric(df: pd.DataFrame, name: str, check_numeric: boo
     if check_positive:
         if (df < 0).any().any():
             raise ValueError(f"[{name}] DataFrame contains negative values.")
-            
+
+def normalize_to_CF(df, bidding_zones):
+    '''
+    Used to check and/or normalize VRE time series.
+    '''
+    df = df.copy()
+    df_z = df[bidding_zones]  # avoid "normalizing" week number
+    if df_z.max(axis=0).max() > 1.0:
+        # Operate on the existing dataframe instead of creating a new one
+        # without the "Week" column. This way is less intrusive.
+        df[bidding_zones] = df_z / df_z.max(axis=0)
+
+        # Hourly production has been normalized from MW to [0, 1].
+        df = df.fillna(value=0)  # if there is no capacity the values should remain 0 instead of becoming NaNs...
+        return df
+    else:
+        # Already normalized. Nothing changes.
+        return df
+
 def load_csv_if_exists(path: Path) -> pd.DataFrame:
     if not path.exists():
         raise FileNotFoundError(f"Missing required file: {path}")

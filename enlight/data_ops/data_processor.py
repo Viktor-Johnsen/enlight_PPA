@@ -214,6 +214,9 @@ class DataProcessor:
         profile_df = pd.read_csv(profile_path, index_col=0)
         utils.validate_df_positive_numeric(profile_df, f"{label.lower()}_profile_pu")
 
+        # Normalize the VRE time series if this is not already the case
+        profile_df = utils.normalize_to_CF(df=profile_df, bidding_zones=self.bidding_zones_list)
+
         # --- Load installed capacity projections ---
         cap_path = (
             config["data_path"] / self.capacity_projections_subdir / f"{cap_file}.csv"
