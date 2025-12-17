@@ -171,7 +171,7 @@ class EnlightRunner:
     #     # Calls methods
     #     self.data_vis.visualize_NBS_inputs(z0=bidding_zone, prices_path=prices_path)
         
-    def prepare_load_run_single_sim(self, scenario_name):
+    def prepare_load_run_single_sim(self, scenario_name, results_path_optional : str = ""):
         '''
         A one-stop-shop for quickly loading the input data and
         running the DA market model, while being sure to use the
@@ -180,14 +180,15 @@ class EnlightRunner:
         '''
         self.prepare_data_single_scenario(scenario_name=scenario_name)
         self.load_data_single_simulation(scenario_name=scenario_name)
-        self.run_single_simulation(scenario_name=scenario_name)
+        results_path = ("/" if len(results_path_optional)>0 else "") + results_path_optional
+        self.run_single_simulation(scenario_name=scenario_name + results_path)
 
-    def prepare_load_run_all_sims(self):
+    def prepare_load_run_all_sims(self, results_path_optional : str = ""):
         '''
         Running the DA market model (with updated config inputs)
         for all of the scenariios specified in the yaml file.
         '''
         for scen in self.scenario_list:
-            self.prepare_load_run_single_sim(scenario_name=scen)
+            self.prepare_load_run_single_sim(scenario_name=scen, results_path_optional=results_path_optional)
         # Note that if accessing e.g. runner.data after running this method
         # then the data is only shown for the last scenario in the list.

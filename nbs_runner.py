@@ -35,6 +35,9 @@ class NBSRunner:
                  BL_compliance_rate = 0.0,
                  PPA_zone = "DK1",
                  P_vre : float = 1,
+                 x_pv : float = 0.4,
+                 x_wind_on :float = 0.3,
+                 x_wind_off : float = 0.3,
                  E_buyer : float = 0.4*8760,
                  y_batt : float = 0.25,
                  S_UB : float = 250,
@@ -51,6 +54,9 @@ class NBSRunner:
         self.BL_compliance_rate = BL_compliance_rate
         self.PPA_zone = PPA_zone
         self.P_vre = P_vre
+        self.x_pv = x_pv
+        self.x_wind_on = x_wind_on
+        self.x_wind_off = x_wind_off
         self.E_buyer = E_buyer
         self.y_batt = y_batt
         self.S_UB = S_UB
@@ -91,9 +97,9 @@ class NBSRunner:
         self.ppa_data = PPAInputData(
             Z=self.PPA_zone,
             P_vre=self.P_vre,  # MW
-            x_pv=0.4,
-            x_wind_on=0.3,
-            x_wind_off=0.3,
+            x_pv=self.x_pv,
+            x_wind_on=self.x_wind_on,
+            x_wind_off=self.x_wind_off,
             y_batt=self.y_batt,  # p_batt/p_vre,
             batt_eta=float(np.sqrt(0.9)),
             batt_Crate=1,
@@ -191,7 +197,7 @@ class NBSRunner:
 
         self.nbs_model.solve_model()
         self.ppa_calcs_dict[w0].visualize_inputs(plot_hours=(100*24, 100*24+168))
-        self.nbs_model.visualize_example_profit_hists(bars=True)
+        self.nbs_model.visualize_example_profit_dist(bars=True)
         self.nbs_model.visualize_example_outcome(show_all_scens=True)
         self.nbs_model.verify_behaviour(w_BESS=0)
         self.nbs_runner_logger.info("RAN a single NBS in NBSRunner with betas: (O:{self.ppa_config.beta_O}, D:{self.ppa_config.beta_D}) -- (profile: {self.PPA_profile})")        
@@ -251,7 +257,7 @@ class NBSRunner:
                         if d.model.Status == GRB.OPTIMAL:
                             res[beta_O][beta_D] = d.get_results()
 
-                with open(f"mult_nbs_results__{self.PPA_profile}_{self.BL_compliance_rate}.pkl", "wb") as f:
+                with open(f"mult_nbs_results__{self.PPA_profile}_{self.BL_compliance_rate}_{self.beta_O_list}.pkl", "wb") as f:
                     pickle.dump(res, f)
 
 
@@ -259,13 +265,13 @@ if __name__=="__main__":
     t0 = time.time()
     # Setup hyperparameters
     PPA_profile = "BL"
-    BL_compliance_perc = 0.0
+    BL_compliance_perc = 0
     PPA_zone = "DK2"
 
     # Producer VRE capacity, Buyer annual consumption, strike price upper bound
     P_vre = 1  # MW
     E_buyer = 0.3*8760  # MWh
-    y_batt = 0.25  # MW_batt / MW_VRE
+    y_batt = 1.0  # MW_batt / MW_VRE
     S_UB = 50  # €/MWh
 
     # Instantiate objects and load power price results from DA market model
@@ -283,9 +289,9 @@ if __name__=="__main__":
     # d=nbs_runner.nbs_model
     # print(f"S = {d.S.X:.2f} €/MWh, volume = {d.M.X if d.PPA_profile=="BL" else d.gamma.X:.2f} {"MW" if d.PPA_profile=="BL" else "%"}")
 
-    # Define ranges for betas
-    beta_D_list = np.round(np.arange(0.0,0.71, 0.3), 2)  # avoid floating point issues
-    beta_O_list = np.round(np.arange(0.0,0.71, 0.3), 2)  # avoid floating point issues
+    # Define ranges for beta
+    beta_D_list = np.round(np.arange(0.0,1.01, 0.25), 2)  # avoid floating point issues
+    beta_O_list = np.round(np.arange(0.0,1.01, 0.25), 2)  # avoid floating point issues
     nbs_runner.mult_nbs(beta_O_list=beta_O_list,
                         beta_D_list=beta_D_list)
 
@@ -295,6 +301,7 @@ if __name__=="__main__":
     # Verify combliance rate
     d=nbs_runner.mult_nbs_models.models[beta_O_list[1]][beta_D_list[0]]
 
+    d.visualize_example_profit_dist(bars=True)
     d.visualize_example_outcome(show_all_scens=True)
     d.verify_behaviour(w_BESS=3)
     
@@ -310,21 +317,35 @@ if __name__=="__main__":
     import matplotlib.pyplot as plt
     import numpy as np
 
-    data = nbs_runner.mult_nbs_models.models[0.2][0.2]
-    hours = range(60*24,60*24+72)
+    data = nbs_runner.mult_nbs_models.models[0.5][0.5]
+    hours = range(180*24,180*24+72)
     alphas = np.linspace(1.0, 0.25, data.P_fore_w.shape[1])
-
+    load_plot_configs()
+    fig, ax = plt.subplots(2, 1, figsize=(12,6))
     # --- First plot ---
     for i, a in enumerate(alphas):
-        plt.plot(data.P_fore_w[hours, i], alpha=a, label=f"Producer: Scen. {i+1}")
+        ax[0].plot(data.P_fore_w[hours, i], alpha=a, label=f"Producer: Scen. {i+1}", ls='--')
 
-    plt.plot(data.L_t[hours], color="black", linewidth=2, label="Buyer")
-    plt.legend()
-    plt.show()
+    ax[0].plot(data.L_t[hours], linewidth=2, label="Buyer")
+    # plt.legend()
+    # plt.show()
+    ax[0].set_title("Forecasts [MW]", loc='left')
 
     # --- Second plot ---
     for i, a in enumerate(alphas):
-        plt.plot(data.lambda_DA_w[hours, i], alpha=a, label=f"λ_DA {i+1}")
+        ax[1].plot(data.lambda_DA_w[hours, i], alpha=a, label=f" Scen. {i+1}")
+    ax[1].set_xlabel("Hour")
+    ax[1].set_title("DA price [€/MWh]", loc='left')
+    
+    prettify_subplots(ax)
+    plt.tight_layout()
+    plt.show()
 
-    plt.legend()
+    fig, ax = plt.subplots(figsize=(12,6))
+    for i in range(d.lambda_DA_w.shape[1]):
+        ldc = sorted(d.lambda_DA_w[:,i])[::-1]
+        ax.plot(ldc, label=f"Scen. {i+1}")
+    prettify_subplots(ax)
+    ax.set_xlabel("Hours [h]")
+    ax.set_title("Price-duration curve [€/MWh]", loc="left")
     plt.show()

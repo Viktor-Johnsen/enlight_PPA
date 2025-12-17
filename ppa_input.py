@@ -274,7 +274,7 @@ class PPAInputCalcs:
             self.B_fore = B_fore  # pd.Series
             self.B_fore_arr = B_fore.values.reshape(len(B_fore), 1)
         else:
-            raise Exception(f"ValueError: The annual buyer consumption {self.ppa_data.E_buyer:.2f} exceeds the zonal total {self.da_data.demand_inflexible_classic.sum(axis=0)[ppa_data.Z]:.2f}")
+            raise Exception(f"ValueError: The annual buyer consumption {self.ppa_data.E_buyer:.2f} exceeds the zonal total {self.da_data.demand_inflexible_classic.sum(axis=0)[self.ppa_data.Z]:.2f}")
         
         if not self.P_batt <= self.da_data.agg_bess.capacity_el[self.ppa_data.Z]:
             raise Exception(f"ValueError: The producer battery power capacity {self.P_batt:.2f} MW exceeds the zonal total {self.da_data.agg_bess.capacity_el[self.ppa_data.Z]:.2f} MW")

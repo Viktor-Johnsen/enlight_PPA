@@ -665,18 +665,18 @@ class NBSModel:
 
                     if self.BL:
                         ax.axhline(M_X, color='k', linestyle='-.', alpha=0.7,
-                                   label='Agreed BL volume $M$')
+                                   label='Agreed BL volume $M$'+f'={self.M.X:.2f} MW')
                     elif self.PPA_profile == 'PaF':
                         ax.plot(gamma_X * self.P_fore_w[:max_hour_shown,w], color='k', linestyle='-.', alpha=0.3,
-                                label=r'Agreed PaF volume $\gamma$ (P_fore)')
+                                label=r'Agreed PaF volume $\gamma$'+f'={self.gamma.X*100:.2f}% (P_fore)')
                     else:
                         ax.plot(gamma_X * self.P_DA_w[:max_hour_shown,w], color='k', linestyle='-.', alpha=0.3,
-                                label=r'Agreed PaP volume $\gamma$ (P_DA)')
+                                label=r'Agreed PaP volume $\gamma$'+f'={self.gamma.X*100:.2f}% (P_DA)')
 
                     if w % 2 == 0:
                         # Only the first plot in each row needs to have the label:
                         ax.set_ylabel('Power [MW]')
-                    ax.set_title(f'Scen. {w}: Power generation and consumption', loc='left')
+                    ax.set_title(f'Scen. {w+1}: Power generation and consumption', loc='left')
                 prettify_subplots(axs)
                 axs[0].legend_.remove()
                 axs[2].legend_.remove()
@@ -694,27 +694,27 @@ class NBSModel:
                 ax.plot(self.L_t[:max_hour_shown], label='Off-taker load profile', linestyle='-', alpha=.8)
                 if self.BL:
                     ax.axhline(M_X, color='k', linestyle='-.', alpha=0.7,
-                                label='Agreed BL volume $M$')
+                                label='Agreed BL volume $M$'+f'={self.M.X:.2f} MW')
                 elif self.PPA_profile == 'PaF':
                     ax.plot(gamma_X * perc(self.P_fore_w, 50)[:max_hour_shown], color='k', linestyle='-.', alpha=0.3,
-                            label=r'Agreed PaF volume $\gamma$ (P_fore)')
+                            label=r'Agreed PaF volume $\gamma$'+f'={self.gamma.X*100:.2f}% (P_fore)')
                 else:
                     ax.plot(gamma_X * perc(self.P_DA_w, 50)[:max_hour_shown], color='k', linestyle='-.', alpha=0.3,
-                            label=r'Agreed PaP volume $\gamma$ (P_DA)')
+                            label=r'Agreed PaP volume $\gamma$'+f'={self.gamma.X*100:.2f}% (P_DA)')
                 prettify_subplots(ax)
             plt.show()
 
-            fig, ax = plt.subplots(figsize=(8,10))
+            fig, ax = plt.subplots(figsize=(12,6))
             unify_palette_cyclers(ax)
             if show_all_scens:
-                for i, w in enumerate(range(self.W)):
-                    ax.plot(self.lambda_DA_w[:max_hour_shown,w], linestyle='-')
+                for w in range(self.W):
+                    ax.plot(self.lambda_DA_w[:max_hour_shown,w], linestyle='-', label=f"Scen. {w+1}")
             else:
                 ax.plot(perc(self.lambda_DA_w, 50)[:max_hour_shown], label='Median DA prices', alpha=.65, linestyle='-')
                 ax.fill_between(range(self.T)[:max_hour_shown], perc(self.lambda_DA_w, low_perc)[:max_hour_shown], perc(self.lambda_DA_w, high_perc)[:max_hour_shown], alpha=0.4, label='DA price 10-90 percentile')
             ax.axhline(S_X, color='k', linestyle='-.', label=f'Optimal {self.PPA_profile} PPA strike price $S$')
             ax.set_ylabel('Price [€/MWh]')
-            ax.set_title(fr"DA prices\nOff-taker with $\beta^O$={self.beta_O}, and developer with $\beta^D$={self.beta_D}", loc='left')
+            ax.set_title(fr"DA prices – Buyer with $\beta^B$={self.beta_O}, and Producer with $\beta^P$={self.beta_D}", loc='left')
             prettify_subplots(ax)
             plt.show()
         else:
@@ -744,7 +744,7 @@ class NBSModel:
             self.VAR_O_power_costs = VAR_O_power_costs
             self.zeta_O_power_costs = zeta_O_power_costs 
 
-            fig, ax = plt.subplots(1, 2, figsize=(8,6))
+            fig, ax = plt.subplots(1, 2, figsize=(10,6))
             unify_palette_cyclers(ax)
 
             w_idx = np.arange(1, self.W+1)
@@ -773,7 +773,7 @@ class NBSModel:
                     ax[1].axhline(self.zeta_O.X, ls="-.", label="VaR after")
                 else:
                     ax[1].axhline(zeta_O_power_costs, ls="-.", label="VaR after")
-                ax[1].set_title(fr"Off-taker POWER COSTS (no WTP) – $\beta^O=${self.beta_O}")
+                ax[1].set_title(fr"Buyer POWER COSTS (no WTP) – $\beta^O=${self.beta_O}")
             else:  # histogram
                 ax[0].hist(self.PI_D_w, color='r', alpha=0.5, label='Before')
                 ax[0].axvline(x=self.VAR_D, color='r', linestyle='--', label='VaR before')
@@ -786,9 +786,9 @@ class NBSModel:
                 ax[0].axvline(x=self.zeta_D.X, linestyle='--', label='VaR after')
                 ax[1].hist(self.y_O.X, alpha=0.5, label='after PPA')
                 ax[1].axvline(x=self.zeta_O.X, linestyle='--', label='VaR after')
-                ax[1].set_title(fr"Off-taker UTILITY – $\beta^O=${self.beta_O}")
+                ax[1].set_title(fr"Buyer UTILITY – $\beta^O=${self.beta_O}")
 
-            ax[0].set_title(fr"Developer PROFITS – $\beta^D=${self.beta_D}")
+            ax[0].set_title(fr"{self.PPA_profile}{(f"({self.BL_compliance_perc})" if self.BL else "")}: Producer PROFITS – $\beta^D=${self.beta_D}   ")
             prettify_subplots(ax)
             ax[0].legend_.remove()
             for ax_ in ax:
@@ -812,7 +812,7 @@ class NBSModel:
                     # Plot and compare total power available and offered
                     # ax.plot(d.P_DA_w[:,i], alpha=.7, label=r"$\overline{P}^{DA}$")
                     ax.plot(self.P_fore_w[hours_shown, i], ls='-', alpha=.5, lw=3, label=r"$P^{fore}$")
-                    ax.plot((1-self.gamma.X) * self.P_DA_w[hours_shown, i] + self.gamma.X * self.P_DA_w[:max_hour_shown,i], ls=':', alpha=.5, label=r"$P^{DA} + p^{PPA}$")
+                    ax.plot((1-self.gamma.X) * self.P_DA_w[hours_shown, i] + self.gamma.X * self.P_DA_w[hours_shown,i], ls=':', alpha=.5, label=r"$P^{DA} + p^{PPA}$")
 
                     # Plot and compare the power available and offered & remunerated at DA price
                     ax.plot((1-self.gamma.X) * self.P_fore_w[hours_shown, i], alpha=.3, lw=3, label=r"$\left(1-\gamma\right) \cdot P^{fore}$")
@@ -994,14 +994,14 @@ class NBSMultModel:
         # unify_palette_cyclers(axs)
         im1 = axs[0].imshow(S_vals, origin='lower', cmap='coolwarm',
                             extent=[min(self.beta_D_list), max(self.beta_D_list), min(self.beta_O_list), max(self.beta_O_list)], aspect='auto')
-        axs[0].set_title("Strike price (S)")
+        axs[0].set_title("Strike price (S in [€/MWh])")
         axs[0].set_xlabel(r"$\beta_D$")
         axs[0].set_ylabel(r"$\beta_O$")
         fig.colorbar(im1, ax=axs[0])
 
         im2 = axs[1].imshow(volume_vals, origin='lower', cmap='viridis',
                             extent=[min(self.beta_D_list), max(self.beta_D_list), min(self.beta_O_list), max(self.beta_O_list)], aspect='auto')
-        axs[1].set_title(f"{self.PPA_profile} volume {"(M)" if self.BL else "($\\gamma$)"}")
+        axs[1].set_title(f"{self.PPA_profile} volume {"(M in [MW])" if self.BL else "($\\gamma$ in [pu])"}")
         axs[1].set_xlabel(r"$\beta_D$")
         axs[1].set_ylabel(r"$\beta_O$")
         fig.colorbar(im2, ax=axs[1])

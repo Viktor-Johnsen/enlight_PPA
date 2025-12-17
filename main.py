@@ -10,7 +10,7 @@ from pathlib import Path
 if __name__ == "__main__":
     # Create an instance of the EnlightRunner
     runner = EnlightRunner()
-    scenario_name = "scenario_1"
+    scenario_name = "scenario_2"
     h=133  # needed for .visualize_data() and .visualize_results()
 
     '''Combination of methods to VISUALIZE INPUT data:'''
@@ -20,12 +20,12 @@ if __name__ == "__main__":
     runner.load_data_single_simulation(scenario_name=scenario_name)
     # Creates instance of the DataVisualizer. Data has to be prepared when running this:
     # issues due to short palette...
-    runner.visualize_data(example_hour=h)
+    # runner.visualize_data(example_hour=h)
 
     '''Combination of methods to RUN a SINGLE simulation
     and SHOW RESULTS for that simulation:'''
     # Creates instance of the EnlightModel
-    runner.run_single_simulation(scenario_name=scenario_name)
+    runner.run_single_simulation(scenario_name=scenario_name + "/test")
     # Creates instance of the ResultsVisualizer.
     runner.visualize_results(example_hour=h)
 

@@ -467,7 +467,7 @@ class PPAModeling:
         '''
         times_ext = self.times_ext
 
-        presentation = False
+        presentation = True
 
         # extend data arrays by repeating last value
         P_fore_ext = np.append(self.P_fore, self.P_fore[-1])
@@ -510,10 +510,10 @@ class PPAModeling:
         PPA_coverage = 100 * np.minimum(self.V_BL, self.p_DA.sol).sum(dim="T").item() / (self.V_BL*self.T)
 
         if presentation:
-            axs[axs_idx].set_title(f'{add_to_title}\n\t PPA coverage: {PPA_coverage:.1f}% \n\t Developer revenues: €{self.producer_net_rev:.1f} - of which DA/PPA: €{self.producer_net_rev-self.PPA_producer_prof:.1f}/€{self.PPA_producer_prof:.1f})\n[MW]', loc='left')
+            axs[axs_idx].set_title(f'{add_to_title}\n\t PPA coverage: {PPA_coverage:.1f}% \n\t Developer revenues: €{self.producer_net_rev:.1f} - of which DA/PPA: €{self.producer_net_rev-self.PPA_producer_prof:.1f}/€{self.PPA_producer_prof:.1f})\nPower generation [MW]', loc='left')
         else:
             # axs[axs_idx].set_title(f'{add_to_title}Power allocation (PPA BL-coverage: {PPA_coverage:.1f}%)\nobj: €{self.model.objective.value:.1f}\nobj: €{self.producer_net_rev:.1f} - of which DA/PPA/constant: €{self.producer_net_rev-self.PPA_producer_prof:.1f}/€{self.PPA_producer_prof:.1f}/€{self.PPA_producer_constant:.1f})\n[MW]', loc='left')
-            axs[axs_idx].set_title(f'{add_to_title}Power allocation (PPA BL-coverage: {PPA_coverage:.1f}%)\nobj: €{self.model.objective.value:.1f}\nobj: €{self.producer_net_rev:.1f} - of which DA/PPA_obj/PPA_const: €{self.producer_net_rev-self.PPA_producer_prof:.1f}/€{self.PPA_producer_prof:.1f}/€{self.PPA_producer_constant:.1f})\n[MW]', loc='left')
+            axs[axs_idx].set_title(f'{add_to_title}Power allocation (PPA BL-coverage: {PPA_coverage:.1f}%)\nobj: €{self.model.objective.value:.1f}\nobj: €{self.producer_net_rev:.1f} - of which DA/PPA_obj/PPA_const: €{self.producer_net_rev-self.PPA_producer_prof:.1f}/€{self.PPA_producer_prof:.1f}/€{self.PPA_producer_constant:.1f})\nPower generation [MW]', loc='left')
         axs[axs_idx].set_xlabel('Time')
 
         return axs
@@ -578,7 +578,7 @@ class PPAModeling:
         '''
         times_ext = self.times_ext
 
-        presentation = False
+        presentation = True
 
         # DA offers in negative price hours
         # extend data arrays by repeating last value
@@ -603,7 +603,7 @@ class PPAModeling:
         
         # title and xlabel
         if presentation:
-            axs[axs_idx].set_title(f'{add_to_title}\n\t Developer revenues: €{self.producer_net_rev:.1f} - of which DA/PPA: €{self.producer_net_rev-self.PPA_producer_prof:.1f}/€{self.PPA_producer_prof:.1f}\n[MW]', loc='left')
+            axs[axs_idx].set_title(f'{add_to_title}\n\t Developer revenues: €{self.producer_net_rev:.1f} - of which DA/PPA: €{self.producer_net_rev-self.PPA_producer_prof:.1f}/€{self.PPA_producer_prof:.1f}\nPower generation [MW]', loc='left')
         else:
             axs[axs_idx].set_title(f'{add_to_title}Power production\nmodel obj: €{self.model.objective.value:.1f}\ntrue obj: €{self.producer_net_rev:.1f} - of which DA/PPA_obj/PPA_const: €{self.producer_net_rev-self.PPA_producer_prof:.1f}/€{self.PPA_producer_prof:.1f}/€{self.PPA_producer_constant:.1f} (corrected)\n[MW]', loc='left')
         axs[axs_idx].set_xlabel('Time')
@@ -644,7 +644,7 @@ if __name__ == "__main__":
     # In the list below the first C-BL is vanilla and the 2nd will include a further constraint.
     profile_types_BL = ['BL', 'BL–COMPLIANCE', 'C-BL', 'C-BL–RESTRICTED_CHARGING', 'AC-BL', 'AC-BL–RESTRICTED_CHARGING']
 
-    settlements = profile_types_PaX
+    settlements = profile_types_BL
 
     models_dict = {}
     for p_ in settlements:
@@ -655,7 +655,7 @@ if __name__ == "__main__":
                 PPA_profile=p,
                 BL_enforce_no_charge_in_deficit=(True if p_.endswith('–RESTRICTED_CHARGING') else False),
                 BL_annual_compliance_percentage=(True if p_.endswith('–COMPLIANCE') else False),
-                BL_compliance_perc=0.827,
+                BL_compliance_perc=0.612,
                 add_batt=(True if p in ['BL', 'C-BL', 'AC-BL'] else False)
             )
 
@@ -673,9 +673,9 @@ if __name__ == "__main__":
     for i, p in enumerate(settlements):
         # Plot production curves
         if models_dict[p].BL:
-            axs = models_dict[p].plot_BL_power_allocation(axs, axs_idx=i, add_to_title=f"{p}\n")
+            axs = models_dict[p].plot_BL_power_allocation(axs, axs_idx=i, add_to_title=f"{p}")
         else:
-            axs = models_dict[p].plot_PaP_power(axs, axs_idx=i, add_to_title=f"{p.replace("_"," ")}\n")
+            axs = models_dict[p].plot_PaP_power(axs, axs_idx=i, add_to_title=f"{p.replace("_"," ")}")
 
     # Plot price curves
     if models_dict[p].BL:
