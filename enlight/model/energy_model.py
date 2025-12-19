@@ -1,10 +1,15 @@
 from pathlib import Path
 import numpy as np
 import pandas as pd
+from logging import Logger
 import linopy
+from typing import TypeAlias
 
+from enlight.data_ops.data_loader import DataLoader
 import enlight.utils as utils
 
+from ppa_input import PaP2DA, BL2DA
+PPA_profile_type: TypeAlias = PaP2DA | BL2DA
 
 class EnlightModel:
     """
@@ -20,7 +25,11 @@ class EnlightModel:
         L_PtX (int): Number of PtX products
     """
 
-    def __init__(self, dataloader_obj, scenario_name, logger):
+    def __init__(self,
+                 dataloader_obj : DataLoader,
+                 scenario_name : str,
+                 logger : Logger,
+                 PaP2DA : PPA_profile_type = None):
         # Initialize logger
         self.logger = logger
         self.data = dataloader_obj
@@ -31,6 +40,14 @@ class EnlightModel:
 
         simulation_path=Path(f'simulations/{self.scenario_name}')
         self.simulation_path = simulation_path
+
+        if PaP2DA is None:
+            self.logger.info("Running Enlight reference model")
+            self.PPA = False
+        else:
+            self.logger.info("Running Enlight with PPA")
+            self.PPA = True  # Use as a bool to easily include PPAs or not
+            self.PaP2DA = PaP2DA
 
         self.model = linopy.Model()
 
@@ -64,12 +81,50 @@ class EnlightModel:
         Note: Unused variables will be excluded from the model unless referenced
                 in the objective or constraints.
         """
+        ######### If including PPAs... #########
+        # Recalculate the hourly cfs to scale them according to the PaP
+        # Select the power forecast of the relevant VRE tech in the PPA zone:
+        # Modify the forecasts of the "free" VREs:
+        fore_on_wind = self.data.wind_onshore_production[self.PaP2DA.z]
+        fore_on_wind_cf = fore_on_wind / fore_on_wind.max()
+        
+        fore_off_wind = self.data.wind_offshore_production[self.PaP2DA.z]
+        fore_off_wind_cf = fore_off_wind / fore_off_wind.max()
 
+        fore_solar_pv = self.data.solar_pv_production[self.PaP2DA.z]
+        fore_solar_pv_cf = fore_solar_pv / fore_solar_pv.max()
+
+        # Default production forecasts for solar and wind are given from the data.
+        # These are reduced according to the capacity contracted in a PPA.
+        # For a "pure" DA model, the if-statement is clearly skipped
+        self.wind_onshore_production = self.data.wind_onshore_production.copy()
+        self.wind_offshore_production = self.data.wind_offshore_production.copy()
+        self.solar_pv_production = self.data.solar_pv_production.copy()
+    
+        if self.PPA:
+            # Initialize a practically empty dataframe to use as upper bound for the PPA vars
+            PPA_upper = (self.data.wind_onshore_production * 0).copy()
+            # Update the upper to correspond to the capacity contracted in the PaP PPA
+            # Onshore wind
+            self.wind_onshore_PaP_fore = PPA_upper.copy()
+            self.wind_onshore_PaP_fore[self.PaP2DA.z] = self.PaP2DA.gamma * self.PaP2DA.on_wind_el_cap * fore_on_wind_cf
+            # Offshore wind
+            self.wind_offshore_PaP_fore = PPA_upper.copy()
+            self.wind_offshore_PaP_fore[self.PaP2DA.z] = self.PaP2DA.gamma * self.PaP2DA.off_wind_el_cap * fore_off_wind_cf
+            # Solar PV
+            self.solar_pv_PaP_fore = PPA_upper.copy()
+            self.solar_pv_PaP_fore[self.PaP2DA.z] = self.PaP2DA.gamma * self.PaP2DA.solar_pv_el_cap * fore_solar_pv_cf
+
+            # Update the forecasts for the VRE capacities not included in the PPA
+            self.wind_onshore_production -= self.wind_onshore_PaP_fore
+            self.wind_offshore_production -= self.wind_offshore_PaP_fore
+            self.solar_pv_production -= self.solar_pv_PaP_fore
+        ######### PPA calculations over #########
         # Onshore wind production [MW]
         # Shape: (T, Z)
         self.wind_onshore_offer = self.model.add_variables(
             lower=0,
-            upper=self.data.wind_onshore_production.values,   # Shape: (T, Z)
+            upper=(self.wind_onshore_production.values),   # Shape: (T, Z)
             coords=[self.times, self.bidding_zones],
             dims=["T", "Z"],
             name='wind_onshore_offer'
@@ -79,7 +134,7 @@ class EnlightModel:
         # Shape: (T, Z)
         self.wind_offshore_offer = self.model.add_variables(
             lower=0,
-            upper=self.data.wind_offshore_production.values,   # Shape: (T, Z)
+            upper=self.wind_offshore_production.values,   # Shape: (T, Z)
             coords=[self.times, self.bidding_zones],
             dims=["T", "Z"],
             name='wind_offshore_offer'
@@ -89,7 +144,7 @@ class EnlightModel:
         # Shape: (T, Z)
         self.solar_pv_offer = self.model.add_variables(
             lower=0,
-            upper=self.data.solar_pv_production.values,   # Shape: (T, Z)
+            upper=self.solar_pv_production.values,   # Shape: (T, Z)
             coords=[self.times, self.bidding_zones],
             dims=["T", "Z"],
             name='solar_pv_offer'
@@ -235,15 +290,42 @@ class EnlightModel:
             name='lineflow'
         )
 
+        # A PPA changes the offers from VREs (and batts in the case of BL)
+        if self.PPA:
+            # Add variables for the VRE offers contracted as part of the PaP
+            self.wind_onshore_PaP_offer = self.model.add_variables(
+                lower=0,
+                upper=self.wind_onshore_PaP_fore.values,  # 0's in all other bidding zones than PPA zone
+                coords=[self.times, self.bidding_zones],
+                dims=["T", "Z"],
+                name='wind_onshore_PaP_offer'
+            )
+            self.wind_offshore_PaP_offer = self.model.add_variables(
+                lower=0,
+                upper=self.wind_offshore_PaP_fore.values,
+                coords=[self.times, self.bidding_zones],
+                dims=["T", "Z"],
+                name='wind_offshore_PaP_offer'
+            )
+            self.solar_pv_PaP_offer = self.model.add_variables(
+                lower=0,
+                upper=self.solar_pv_PaP_fore.values,
+                coords=[self.times, self.bidding_zones],
+                dims=["T", "Z"],
+                name='solar_pv_PaP_offer'
+            )
+
     def _build_constraints(self):
         """
         Placeholder for adding model constraints.
         """
-        
         self.power_balance = self.model.add_constraints(
             (self.wind_onshore_offer
+             + (self.wind_onshore_PaP_offer if self.PPA else 0)
              + self.wind_offshore_offer
+             + (self.wind_offshore_PaP_offer if self.PPA else 0)
              + self.solar_pv_offer
+             + (self.solar_pv_PaP_offer if self.PPA else 0)
              + self.hydro_ror_offer
              + self.conventional_units_offer.dot(self.data.G_Z_xr)  # type: ignore
              + self.hydro_res_units_offer.dot(self.data.G_hydro_res_Z_xr)
@@ -343,8 +425,11 @@ class EnlightModel:
                 - self.demand_flexible_classic_bid * self.data.wtp_classic
                 # Generators:
                 + self.wind_onshore_offer * self.data.wind_onshore_bid_price
+                + (self.wind_onshore_PaP_offer * (-self.PaP2DA.s) if self.PPA else 0)
                 + self.wind_offshore_offer * self.data.wind_offshore_bid_price
+                + (self.wind_offshore_PaP_offer * (-self.PaP2DA.s) if self.PPA else 0)
                 + self.solar_pv_offer * self.data.solar_pv_bid_price
+                + (self.solar_pv_PaP_offer * (-self.PaP2DA.s) if self.PPA else 0)
                 + self.hydro_ror_offer * self.data.hydro_ror_bid_price
                ).sum()
            

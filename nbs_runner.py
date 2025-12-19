@@ -35,10 +35,11 @@ class NBSRunner:
                  BL_compliance_rate = 0.0,
                  PPA_zone = "DK1",
                  P_vre : float = 1,
+                 x_tot_Z : float = 0,
                  x_pv : float = 0.4,
                  x_wind_on :float = 0.3,
                  x_wind_off : float = 0.3,
-                 E_buyer : float = 0.4*8760,
+                 x_buyer : float = 0.4,
                  y_batt : float = 0.25,
                  S_UB : float = 250,
                  ) -> None:
@@ -54,10 +55,11 @@ class NBSRunner:
         self.BL_compliance_rate = BL_compliance_rate
         self.PPA_zone = PPA_zone
         self.P_vre = P_vre
+        self.x_tot_Z = x_tot_Z
         self.x_pv = x_pv
         self.x_wind_on = x_wind_on
         self.x_wind_off = x_wind_off
-        self.E_buyer = E_buyer
+        self.x_buyer = x_buyer
         self.y_batt = y_batt
         self.S_UB = S_UB
 
@@ -83,7 +85,7 @@ class NBSRunner:
             self.config_yaml = yaml.safe_load(file)
 
         # Extract configuration values
-        self.scenario_list: List[str] = self.config_yaml.get("scenario_list", [])
+        self.scenario_list: list[str] = self.config_yaml.get("scenario_list", [])
         self.W = len(self.scenario_list)
 
         # Register into the logger
@@ -97,13 +99,14 @@ class NBSRunner:
         self.ppa_data = PPAInputData(
             Z=self.PPA_zone,
             P_vre=self.P_vre,  # MW
+            x_tot_Z=self.x_tot_Z,  # p.u.
             x_pv=self.x_pv,
             x_wind_on=self.x_wind_on,
             x_wind_off=self.x_wind_off,
             y_batt=self.y_batt,  # p_batt/p_vre,
             batt_eta=float(np.sqrt(0.9)),
             batt_Crate=1,
-            E_buyer=self.E_buyer,  # MWh
+            x_buyer=self.x_buyer,  # P_buyer.mean()/P_vre
             ppa_logger=self.nbs_runner_logger,
         )
         # 2) Instantiate a NBS setup instance
@@ -168,39 +171,39 @@ class NBSRunner:
         # self.P_fore_ws = np.vstack(list(P_fore_dict.values())).reshape(self.T, self.W)
         # self.lambda_DA_ws = np.vstack(list(lambda_DA_dict.values())).reshape(self.T, self.W)
 
-# single_nbs does NOT currently work as intended...
-    def single_nbs(self, scenario_name : str = "scenario_1") -> None:
-        # Arbitrary scenario used to retrieve data that is
-        # NOT scenario-specific from DataLoader of PPAInputCalcs objects:
-        w0 = self.scenario_list[0]
+# # single_nbs does NOT currently work as intended...
+#     def single_nbs(self, scenario_name : str = "scenario_1") -> None:
+#         # Arbitrary scenario used to retrieve data that is
+#         # NOT scenario-specific from DataLoader of PPAInputCalcs objects:
+#         w0 = self.scenario_list[0]
 
-        # 5) Instantiate and run an NBSModel
-        self.nbs_model = NBSModel(
-            PPA_profile=self.PPA_profile,  # BL or PaP
-            BL_compliance_perc=self.BL_compliance_rate,
-            P_fore_w=self.P_fore_w,
-            P_batt=self.ppa_calcs_dict[w0].P_batt,  # use any scenario
-            batt_eta=self.ppa_data.batt_eta,
-            batt_Crate=self.ppa_data.batt_Crate,
-            L_t=self.ppa_calcs_dict[w0].B_fore_arr,  # use any scenario
-            lambda_DA_w=self.lambda_DA_w,
-            WTP=self.da_data_dict[w0].voll_classic,  # use any scenario
-            S_UB=self.nbs_setup.S_UB,  # PPA price
-            M_UB=self.nbs_setup.M_UB,  # BL volume
-            gamma_UB=self.nbs_setup.gamma_UB,
-            beta_D=self.nbs_setup.beta_D,
-            beta_O=self.nbs_setup.beta_O,
-            alpha=self.nbs_setup.alpha,
-            nbs_model_logger=self.nbs_runner_logger,
-            # LBs, hp, and add_batt have been left as default values.
-        )
+#         # 5) Instantiate and run an NBSModel
+#         self.nbs_model = NBSModel(
+#             PPA_profile=self.PPA_profile,  # BL or PaP
+#             BL_compliance_perc=self.BL_compliance_rate,
+#             P_fore_w=self.P_fore_w,
+#             P_batt=self.ppa_calcs_dict[w0].P_batt,  # use any scenario
+#             batt_eta=self.ppa_data.batt_eta,
+#             batt_Crate=self.ppa_data.batt_Crate,
+#             L_t=self.ppa_calcs_dict[w0].B_fore_arr,  # use any scenario
+#             lambda_DA_w=self.lambda_DA_w,
+#             WTP=self.da_data_dict[w0].voll_classic,  # use any scenario
+#             S_UB=self.nbs_setup.S_UB,  # PPA price
+#             M_UB=self.nbs_setup.M_UB,  # BL volume
+#             gamma_UB=self.nbs_setup.gamma_UB,
+#             beta_D=self.nbs_setup.beta_D,
+#             beta_O=self.nbs_setup.beta_O,
+#             alpha=self.nbs_setup.alpha,
+#             nbs_model_logger=self.nbs_runner_logger,
+#             # LBs, hp, and add_batt have been left as default values.
+#         )
 
-        self.nbs_model.solve_model()
-        self.ppa_calcs_dict[w0].visualize_inputs(plot_hours=(100*24, 100*24+168))
-        self.nbs_model.visualize_example_profit_dist(bars=True)
-        self.nbs_model.visualize_example_outcome(show_all_scens=True)
-        self.nbs_model.verify_behaviour(w_BESS=0)
-        self.nbs_runner_logger.info("RAN a single NBS in NBSRunner with betas: (O:{self.ppa_config.beta_O}, D:{self.ppa_config.beta_D}) -- (profile: {self.PPA_profile})")        
+#         self.nbs_model.solve_model()
+#         self.ppa_calcs_dict[w0].visualize_inputs(plot_hours=(100*24, 100*24+168))
+#         self.nbs_model.visualize_example_profit_dist(bars=True)
+#         self.nbs_model.visualize_example_outcome(show_all_scens=True)
+#         self.nbs_model.verify_behaviour(w_BESS=0)
+#         self.nbs_runner_logger.info("RAN a single NBS in NBSRunner with betas: (O:{self.ppa_config.beta_O}, D:{self.ppa_config.beta_D}) -- (profile: {self.PPA_profile})")        
 
     def mult_nbs(self, beta_O_list, beta_D_list) -> None:
         self.mult_nbs_has_run = True
@@ -264,14 +267,14 @@ class NBSRunner:
 if __name__=="__main__":
     t0 = time.time()
     # Setup hyperparameters
-    PPA_profile = "BL"
+    PPA_profile = "PaF"
     BL_compliance_perc = 0
     PPA_zone = "DK2"
 
     # Producer VRE capacity, Buyer annual consumption, strike price upper bound
     P_vre = 1  # MW
-    E_buyer = 0.3*8760  # MWh
-    y_batt = 1.0  # MW_batt / MW_VRE
+    x_buyer = 0.3  # ratio of average buyer power consumption relative to capacity of Producer VRE
+    y_batt = 0.25  # MW_batt / MW_VRE
     S_UB = 50  # €/MWh
 
     # Instantiate objects and load power price results from DA market model
@@ -280,7 +283,8 @@ if __name__=="__main__":
                     BL_compliance_rate=BL_compliance_perc,
                     PPA_zone=PPA_zone,
                     P_vre=P_vre,
-                    E_buyer=E_buyer,
+                    # x_tot_Z, x_pv, x_wind_on, x_wind_off
+                    x_buyer=x_buyer,
                     y_batt=y_batt,
                     S_UB=S_UB,
     )
@@ -290,8 +294,8 @@ if __name__=="__main__":
     # print(f"S = {d.S.X:.2f} €/MWh, volume = {d.M.X if d.PPA_profile=="BL" else d.gamma.X:.2f} {"MW" if d.PPA_profile=="BL" else "%"}")
 
     # Define ranges for beta
-    beta_D_list = np.round(np.arange(0.0,1.01, 0.25), 2)  # avoid floating point issues
-    beta_O_list = np.round(np.arange(0.0,1.01, 0.25), 2)  # avoid floating point issues
+    beta_D_list = np.round(np.arange(0.0,0.41, 0.2), 2)  # avoid floating point issues
+    beta_O_list = np.round(np.arange(0.0,0.41, 0.2), 2)  # avoid floating point issues
     nbs_runner.mult_nbs(beta_O_list=beta_O_list,
                         beta_D_list=beta_D_list)
 
@@ -304,6 +308,7 @@ if __name__=="__main__":
     d.visualize_example_profit_dist(bars=True)
     d.visualize_example_outcome(show_all_scens=True)
     d.verify_behaviour(w_BESS=3)
+    nbs_runner.ppa_calcs_dict["scenario_1"].visualize_inputs(plot_hours=(100*24, 100*24+168))
     
 
     # d=nbs_runner.nbs_model
@@ -317,7 +322,7 @@ if __name__=="__main__":
     import matplotlib.pyplot as plt
     import numpy as np
 
-    data = nbs_runner.mult_nbs_models.models[0.5][0.5]
+    data = nbs_runner.mult_nbs_models.models[0.1][0.1]
     hours = range(180*24,180*24+72)
     alphas = np.linspace(1.0, 0.25, data.P_fore_w.shape[1])
     load_plot_configs()

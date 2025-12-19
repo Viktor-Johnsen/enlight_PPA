@@ -7,6 +7,7 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
+from typing import TypeAlias
 
 # from pyclustering.cluster.kmedoids import kmedoids
 # from pyclustering.utils import calculate_distance_matrix
@@ -16,10 +17,75 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 from PPA_modeling import load_plot_configs, unify_palette_cyclers, prettify_subplots
-from nbs_modeling import NBSModel
+from nbs_modeling import NBSModel, generate_data
 
 def normalize_forecast_power(df: pd.DataFrame, Z: str):
     return df[Z] / df.max()[Z]
+
+@dataclass
+class PaP2DA:
+    '''
+    Purely inputs.
+
+    Pre-selects the data/results needed as inputs to the DA model
+    in order to include PPAs in the model.
+
+    To include a PaP all we need to pass are:
+    - Bidding zone: Z
+    - PPA price: S
+    - PPA volume share: gamma
+    - capacities of the techs in the Producer portfolio
+        - off_wind_el_cap
+        - on_wind_el_cap
+        - solar_pv_el_cap
+    '''
+    # Bidding zone of producer and buyer
+    z : str = "DK1"
+
+    # Producer specs
+    s : float = 5.0  # €/MWh -- PPA price
+    gamma : float = 0.5  # p.u. of Producer total VRE capacity
+    solar_pv_el_cap : float = 0
+    on_wind_el_cap : float = 0
+    off_wind_el_cap : float = 0
+    ppa2da_logger : Logger | None = None
+
+    def __post_init__(self):
+        self.ppa2da_logger = self.ppa2da_logger or utils.setup_logging(log_file="nbs.log")
+        self.ppa2da_logger.info("PaP2DA: Create instance to effectively transfer PPA outcome to DA market.")
+
+@dataclass
+class BL2DA:
+    '''
+    Purely inputs.
+
+    Pre-selects the data/results needed as inputs to the DA model
+    in order to include PPAs in the model.
+
+    To include a PaP all we need to pass are:
+    - Bidding zone: Z
+    - PPA price: S
+    - PPA volume share: gamma
+    - capacities of the techs in the Producer portfolio
+        - off_wind_el_cap
+        - on_wind_el_cap
+        - solar_pv_el_cap
+    '''
+    # Bidding zone of producer and buyer
+    z : str = "DK1"
+
+    # Producer specs
+    s : float = 5.0  # €/MWh -- PPA price
+    m : float = 0.5  # MW -- BL volume
+    solar_pv_el_cap : float = 1
+    on_wind_el_cap : float = 1
+    off_wind_el_cap : float = 1
+    ppa2da_logger : Logger | None = None
+
+    def __post_init__(self):
+        self.ppa2da_logger = self.ppa2da_logger or utils.setup_logging(log_file="nbs.log")
+        self.ppa2da_logger.info("PaP2DA: Create instance to effectively transfer PPA outcome to DA market.")
+
 
 # def week_reduction(fore_power : np.ndarray, lambda_DA : np.ndarray, scen0 : int, n_clusters : int = 4, plot : bool = False):
 #     '''
@@ -100,25 +166,25 @@ def normalize_forecast_power(df: pd.DataFrame, Z: str):
     #   (VRE forecasts) from multiple weather years and
     #   the resulting power prices from the DA market model
 
-# def generate_scenarios(yearly_param, noise_lvl=0.05):
-#     '''
-#     Until we have run the DA model for multiple weather years, I need to make some synthetic data.
-#     '''
-#     np.random.seed(42)
-#     num_hours = yearly_param.shape[0]
-#     num_scens = 4
+def generate_scenarios(yearly_param, noise_lvl=0.05):
+    '''
+    Until we have run the DA model for multiple weather years, I need to make some synthetic data.
+    '''
+    np.random.seed(42)
+    num_hours = yearly_param.shape[0]
+    num_scens = 4
 
-#     # Initialize new matrix with 10 year-scenarios
-#     mult_year_param = np.zeros((num_hours, num_scens))
-#     mult_year_param[:, 0] = yearly_param.values
+    # Initialize new matrix with 10 year-scenarios
+    mult_year_param = np.zeros((num_hours, num_scens))
+    mult_year_param[:, 0] = yearly_param.values
 
-#     # Generate noise
-#     for s in range(1, num_scens):
-#         noise = np.random.normal(loc=0, scale=noise_lvl, size=num_hours)
-#         mult_year_param[:, s] = mult_year_param[:, 0] * (1 + noise)
-#     mult_year_param = np.maximum(mult_year_param, 0)
-#     # E.g. P_fore_w
-#     return mult_year_param
+    # Generate noise
+    for s in range(1, num_scens):
+        noise = np.random.normal(loc=0, scale=noise_lvl, size=num_hours)
+        mult_year_param[:, s] = mult_year_param[:, 0] * (1 + noise)
+    mult_year_param = np.maximum(mult_year_param, 0)
+    # E.g. P_fore_w
+    return mult_year_param
     
 @dataclass
 class PPAInputData:
@@ -127,12 +193,18 @@ class PPAInputData:
 
     Pre-configures the parameters needed as inputs to create the data
     required on the producer side.
+
+    This function has two options. One intended for analyses from an
+    individual stakeholder perspective and one from system perspective:
+    - Individual: Use P_vre if you want to give a physical capacity for the Producer portfolio
+    - System: Use x_tot_Z if you want to assign a share of the total zonal capacity to the Producer portfolio
     '''
     # Bidding zone of producer and buyer
     Z : str = "DK1"
 
     # Producer specs
     P_vre : float = 1  # MW, total VRE capacity of producer
+    x_tot_Z : float = 0  # used to override P_vre.
     x_pv : float = 1  # -, total solar pv share of VRE capacity
     x_wind_on : float = 0  # -, share of onshore wind
     x_wind_off : float = 0  # -, share of offshore wind
@@ -141,7 +213,9 @@ class PPAInputData:
     batt_eta : float = float(np.sqrt(0.9))
 
     # Buyer specs
-    E_buyer : float = 2000  # MWh, buyer total annual electricity consumption
+    # E_buyer is calculated from P_vre (or x_tot_Z and P_vre_Z_tot)
+    x_buyer : float = 0.5  # The average capacity of the buyer relative to the total Producer VRE capacity
+    # x_buyer is equivalent to E_buyer/(P_vre * 8760)
 
     ppa_logger : Logger | None = None
 
@@ -160,8 +234,8 @@ class PPAInputData:
                 >=0):
             raise ValueError(f"The VRE capacity shares must be between 0 and 1. Currently they are: {self.x_pv, self.x_wind_on, self.x_wind_off}")
         
-        if not (1>=self.x_pv + self.x_wind_on + self.x_wind_off >= 0):
-            raise ValueError(f"The total share of VREs must be between 0 and 1. It is currently: {self.x_pv + self.x_wind_on + self.x_wind_off:.2f}")
+        if self.x_pv + self.x_wind_on + self.x_wind_off != 1:
+            raise ValueError(f"The total share of VREs must be 1. It is currently: {self.x_pv + self.x_wind_on + self.x_wind_off:.2f}")
 
 
 class PPAInputCalcs:
@@ -223,34 +297,37 @@ class PPAInputCalcs:
 
     def calculate_forecasts(self):
         # Get the technology-specific installed capacity
-        ppa_cfg_attrs = ["x_pv", "x_wind_on", "x_wind_off"]
-        fore_attrs = ["solar_pv_production", "wind_onshore_production", "wind_offshore_production"]
-        fore_pu_attrs = ["fore_solar_pv_pu", "fore_on_wind_pu", "fore_off_wind_pu"]
-        new_capacity_attrs = ["capacity_solar_pv", "capacity_on_wind", "capacity_off_wind"]
-        new_fore_attrs = ["P_fore_solar_pv", "P_fore_on_wind", "P_fore_off_wind"]
+        # Existing attributes for dynamic calling
+        attrs_ppa_cfg = ["x_pv", "x_wind_on", "x_wind_off"]
+        attrs_fore = ["solar_pv_production", "wind_onshore_production", "wind_offshore_production"]
+        attrs_fore_pu = ["fore_solar_pv_pu", "fore_on_wind_pu", "fore_off_wind_pu"]
+        # New attributes for dynamic assignment
+        new_attrs_capacity = ["solar_pv_el_cap", "on_wind_el_cap", "off_wind_el_cap"]
+        new_attrs_fore = ["P_fore_solar_pv", "P_fore_on_wind", "P_fore_off_wind"]
 
-        for tech in range(len(ppa_cfg_attrs)):
-            value = getattr(self.ppa_data, ppa_cfg_attrs[tech]) * self.ppa_data.P_vre
-            # e.g.: capacity_solar_pv = x_pv * P_vre
-            setattr(self, new_capacity_attrs[tech], value)
+        # Relevant only if using x_tot_Z: P_vre_Z_tot = P_pv + P_onwind + P_offwind in zone Z
+        self.P_vre_Z_tot = sum(getattr(self.da_data, fore_attr).max()[self.ppa_data.Z] for fore_attr in attrs_fore)
+        # If e.g. x_tot_Z = 0.9, then 90% of the zonal VRE capacity is included in the Producer's portfolio.
+        self.P_vre_Z = self.ppa_data.x_tot_Z * self.P_vre_Z_tot
 
-            if getattr(self, new_capacity_attrs[tech]) <= getattr(self.da_data, fore_attrs[tech]).max()[self.ppa_data.Z]:
-                value = getattr(self, new_capacity_attrs[tech]) * getattr(self, fore_pu_attrs[tech])
-                # e.g.: P_fore_solar_pv = capacity_solar_pv * fore_solar_pv_pu
-                setattr(self, new_fore_attrs[tech], value)
+        for tech in range(len(attrs_ppa_cfg)):
+            if self.ppa_data.x_tot_Z > 0: # capacity share at bidding zone level
+                # e.g. for PV: value = x_pv * x_tot_Z * (P_pv[Z] + P_onwind[Z] + P_offwind[Z])
+                value = getattr(self.ppa_data, attrs_ppa_cfg[tech]) * self.P_vre_Z
             else:
-                raise Exception(f"ValueError: The capacity ({new_capacity_attrs[tech]}) of the PPA producer {getattr(self, new_capacity_attrs[tech]):.2f} is higher than the total capacity in the bidding zone {self.da_data.__getattribute__(fore_attrs[tech]).max()[self.ppa_data.Z]:.2f}")
+                # The default actual physical capacities are given:
+                # e.g. solar_pv_el_cap = x_pv * P_vre
+                value = getattr(self.ppa_data, attrs_ppa_cfg[tech]) * self.ppa_data.P_vre
+            setattr(self, new_attrs_capacity[tech], value)
 
-        # # Scale the normalized hourly forecasts to the installed capacity of the producer
-        # if self.capacity_solar_pv <= self.da_data.solar_pv_production.max()[self.ppa_data.Z]:
-        #     self.P_fore_solar_pv = self.capacity_solar_pv * self.fore_solar_pv_pu
-        # else:
-        #     raise Exception(f"ValueError: The solar capacity of the PPA producer {self.capacity_solar_pv:.2f} is higher than the total solar capacity in the bidding zone {self.da_data.solar_pv_production.max()[self.ppa_data.Z]:.2f}")
+            if getattr(self, new_attrs_capacity[tech]) <= getattr(self.da_data, attrs_fore[tech]).max()[self.ppa_data.Z]:
+                value = getattr(self, new_attrs_capacity[tech]) * getattr(self, attrs_fore_pu[tech])
+                # e.g.: P_fore_solar_pv = solar_pv_el_cap * fore_solar_pv_pu
+                setattr(self, new_attrs_fore[tech], value)
+            else:
+                raise Exception(f"ValueError: The capacity ({new_attrs_capacity[tech]}) of the PPA producer {getattr(self, new_attrs_capacity[tech]):.2f} is higher than the total capacity in the bidding zone {self.da_data.__getattribute__(attrs_fore[tech]).max()[self.ppa_data.Z]:.2f}")
         
-        # self.P_fore_on_wind = self.capacity_on_wind * self.fore_on_wind_pu
-        # self.P_fore_off_wind = self.capacity_off_wind * self.fore_off_wind_pu
-
-        # Total VRE forecast of producer
+        self.P = self.solar_pv_el_cap + self.on_wind_el_cap + self.off_wind_el_cap  # either corresponds to P_vre or P_vre_Z
         self.P_fore = self.P_fore_solar_pv + self.P_fore_on_wind + self.P_fore_off_wind
 
     def load_power_prices(self):
@@ -262,19 +339,20 @@ class PPAInputCalcs:
             raise Exception(f"FileNotFoundError: Please provide an existing scenario name. No power prices are given under (full file path shown) {prices_file}.")
 
     def calculate_batt_power(self):
-        self.P_batt = self.ppa_data.P_vre * self.ppa_data.y_batt  # MW
+        self.P_batt = self.P * self.ppa_data.y_batt  # MW
         self.E_batt = self.P_batt / self.ppa_data.batt_Crate  # MWh
 
     def verify_batt_capacy_and_buyer_load(self):
         '''
         Check that the VRE, batt and buyer consumption levels are indeed below the zonal maximum.
         '''
-        if self.ppa_data.E_buyer <= self.da_data.demand_inflexible_classic.sum(axis=0)[self.ppa_data.Z]:
-            B_fore = self.ppa_data.E_buyer * self.fore_inflex_classic_pu
+        self.E_buyer = 8760 * self.ppa_data.x_buyer * self.P  # MWh/year
+        if self.E_buyer <= self.da_data.demand_inflexible_classic.sum(axis=0)[self.ppa_data.Z]:
+            B_fore = self.E_buyer * self.fore_inflex_classic_pu
             self.B_fore = B_fore  # pd.Series
             self.B_fore_arr = B_fore.values.reshape(len(B_fore), 1)
         else:
-            raise Exception(f"ValueError: The annual buyer consumption {self.ppa_data.E_buyer:.2f} exceeds the zonal total {self.da_data.demand_inflexible_classic.sum(axis=0)[self.ppa_data.Z]:.2f}")
+            raise Exception(f"ValueError: The annual buyer consumption {self.E_buyer:.2f} exceeds the zonal total {self.da_data.demand_inflexible_classic.sum(axis=0)[self.ppa_data.Z]:.2f}")
         
         if not self.P_batt <= self.da_data.agg_bess.capacity_el[self.ppa_data.Z]:
             raise Exception(f"ValueError: The producer battery power capacity {self.P_batt:.2f} MW exceeds the zonal total {self.da_data.agg_bess.capacity_el[self.ppa_data.Z]:.2f} MW")
@@ -284,14 +362,14 @@ class PPAInputCalcs:
     def visualize_inputs(self, plot_hours=(0, 8760)):
         # Visualize the capacities as a bar plot
         tech = ["Offshore Wind", "Onshore Wind", "Solar PV", "BESS", "VRE total"]
-        cap = [self.capacity_off_wind, self.capacity_on_wind, self.capacity_solar_pv, self.P_batt]
+        cap = [self.off_wind_el_cap, self.on_wind_el_cap, self.solar_pv_el_cap, self.P_batt]
         tech_cap_pairs = list(zip(tech, cap))
         # Sort techs by capacity: low to high
         sorted_pairs = sorted(tech_cap_pairs, key=lambda x: x[1])
         # Separate into two lists
         tech_sorted, cap_sorted = zip(*sorted_pairs)
         tech = list(tech_sorted) + ["VRE total"]
-        cap = list(cap_sorted) + [self.ppa_data.P_vre]
+        cap = list(cap_sorted) + [self.P]
         
         fig, ax = plt.subplots(figsize=(12, 6))
         unify_palette_cyclers(ax)
@@ -337,19 +415,19 @@ class PPAInputCalcs:
         ax.legend().remove()
         plt.show()
 
-    def hour_reduction(self, num_clusters : int = 6):
-        (self.P_fore_w_red,
-         self.lambda_DA_w_red,
-         self.PROB_w_red,
-         self.weeks_l
-         ) = week_reduction_by_scenario(
-             fore_power_w=self.P_fore_w,
-             lambda_DA_w=self.lambda_DA_w,
-             num_clusters=num_clusters
-        )
-        B_fore_arr_red = self.B_fore_arr[:168*52].reshape(52, 168)
-        B_fore_arr_red = B_fore_arr_red[self.weeks_l[1]].ravel()
-        self.B_fore_arr_red = B_fore_arr_red.reshape(len(B_fore_arr_red), 1)
+    # def hour_reduction(self, num_clusters : int = 6):
+    #     (self.P_fore_w_red,
+    #      self.lambda_DA_w_red,
+    #      self.PROB_w_red,
+    #      self.weeks_l
+    #      ) = week_reduction_by_scenario(
+    #          fore_power_w=self.P_fore_w,
+    #          lambda_DA_w=self.lambda_DA_w,
+    #          num_clusters=num_clusters
+    #     )
+    #     B_fore_arr_red = self.B_fore_arr[:168*52].reshape(52, 168)
+    #     B_fore_arr_red = B_fore_arr_red[self.weeks_l[1]].ravel()
+    #     self.B_fore_arr_red = B_fore_arr_red.reshape(len(B_fore_arr_red), 1)
 
 @dataclass
 class NBSSetup:
@@ -397,12 +475,13 @@ if __name__=="__main__":
     ppa_data = PPAInputData(
         Z=PPA_zone,
         P_vre=1,  # MW
+        x_tot_Z=0,
         x_pv=0.5,
         x_wind_on=0.3,
         x_wind_off=0.2,
         y_batt=0.25,  # p_batt/p_vre,
         batt_Crate=1,
-        E_buyer=0.4*8760,  # MWh
+        x_buyer=0.4,
         ppa_logger=logger,
     )
 

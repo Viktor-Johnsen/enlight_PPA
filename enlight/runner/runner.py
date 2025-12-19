@@ -97,7 +97,7 @@ class EnlightRunner:
             scenario_name=scenario_name,
             logger=self.logger)
 
-    def run_single_simulation(self, scenario_name : str) -> None:
+    def run_single_simulation(self, scenario_name : str, PaP2DA = None) -> None:
         """
         Run a single simulation and simulation path.
 
@@ -109,6 +109,7 @@ class EnlightRunner:
         self.enlight_model = EnlightModel(
             dataloader_obj=self.data,
             scenario_name=scenario_name,
+            PaP2DA=PaP2DA,
             logger=self.logger
         )
         # Run the model
