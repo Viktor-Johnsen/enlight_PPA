@@ -381,7 +381,7 @@ def save_model_results(self):#, week: int):
                 self.results_econ["costs"][vre_ppa_] = self.results_dict[vre_ppa].sum(axis=0) * VRE_costs[vre_ppa.replace("_PaP", "")]
         else:
             vre_ppa_list = []
-
+        print("dem utils")
         # Get demands utilities and power costs
         for dem in dem_list:
             dem_ = dem.replace("_bid_sol","")
@@ -389,8 +389,27 @@ def save_model_results(self):#, week: int):
             self.results_econ["revenues"][dem_] = (self.results_dict[dem] * dem_bid_price[dem]).sum(axis=0)
             # Costs for a demand is the power costs
             self.results_econ["costs"][dem_] = (self.results_dict[dem].mul(self.results_dict['electricity_prices'], axis='columns')).sum(axis=0)
+        print("Add PaP calc for inflex dem")
+        # Add PaP calculation for the inflexible demand
+        if self.PPA:
+            self.results_econ['profits_sw']['demand_inflexible_classic'] = (self.results_econ["revenues"]['demand_inflexible_classic']
+                                               - self.results_econ["costs"]['demand_inflexible_classic'])
+            # Overwrite the revenues and costs... quick fix
+            self.results_econ["revenues"]['demand_inflexible_classic'] = 0
+            self.results_econ["costs"]['demand_inflexible_classic'] = (
+                (self.wind_onshore_PaP_fore
+                 + self.wind_offshore_PaP_fore
+                 + self.solar_pv_PaP_fore
+                 ) * self.results_dict['electricity_prices']
+                 - (self.results_dict['wind_onshore_PaP_offer_sol']
+                 + self.results_dict['wind_offshore_PaP_offer_sol']
+                 + self.results_dict['solar_pv_PaP_offer_sol']
+                 ) * self.PaP2DA.s
+                 - self.results_dict['demand_inflexible_classic_bid_sol']
+                 * self.results_dict['electricity_prices']
+            ).sum(axis=0)
 
-        # Get conventional and hydro res units revenues and operatings costs
+        # Get conventional and hydro res units revenues and operating costs
         for gen in gen_units_list:
             gen_ = gen.replace("_offer_sol", "")
             self.results_econ["revenues"][gen_] = (self.results_dict[gen] * (self.results_dict['electricity_prices'].dot(gen_units_map_to_zone[gen].T))).sum(axis=0)
@@ -425,6 +444,7 @@ def save_model_results(self):#, week: int):
         # Align index (they are slightly different)
         self.data.L_Z_df.index = self.results_dict['lineflow_sol'].columns
         self.results_econ['profits']['lineflow'] = (-self.results_dict['lineflow_sol'].dot(self.data.L_Z_df) * self.results_dict['electricity_prices']).sum(axis=0)
+        self.results_econ['profits_tot']['lineflow'] = float(np.round(self.results_econ['profits']['lineflow'].sum()/1e9,4))
 
         # Calculate profits for other participants
         for k in self.results_econ['revenues'].keys():
@@ -433,6 +453,17 @@ def save_model_results(self):#, week: int):
         print("cs")
         # Compare social welfare from this function and from the model.
         self.results_econ["consumer surplus"] = sum(map(lambda x: self.results_econ['profits'][x.replace("_bid_sol","")].sum(), dem_list+dem_units_list))
+        if self.PPA:
+            self.results_econ["consumer surplus perceived"] = (
+                sum(
+                    self.results_econ['profits_sw'][x.replace("_bid_sol", "")].sum()
+                    for x in ['demand_inflexible_classic_bid_sol']
+                )
+                + sum(
+                    self.results_econ['profits'][x.replace("_bid_sol","")].sum()
+                    for x in dem_list+dem_units_list if x!='demand_inflexible_classic_bid_sol'
+                )
+            )
         print("ps")
         self.results_econ["producer surplus"] = sum(map(lambda x: self.results_econ['profits'][x.replace("_offer_sol","")].sum(), vre_list+gen_units_list+stor_units_list+['lineflow']+vre_ppa_list))
         print("ps perceived")
@@ -440,7 +471,12 @@ def save_model_results(self):#, week: int):
         print("sw")
         self.results_econ["social welfare"] =  self.results_econ["producer surplus"] + self.results_econ["consumer surplus"]
         print("sw perceived")
-        self.results_econ["social welfare perceived"] =  self.results_econ["producer surplus perceived"] + self.results_econ["consumer surplus"]
+        if self.PPA:
+            self.results_econ["social welfare perceived"] =  self.results_econ["producer surplus perceived"] + self.results_econ["consumer surplus perceived"]
+        else:
+            # Without PaP there is no "consumer surplus perceived"
+            self.results_econ["social welfare perceived"] =  self.results_econ["producer surplus perceived"] + self.results_econ["consumer surplus"]
+        
 
         self.logger.info('Results processed')
     except Exception as e:

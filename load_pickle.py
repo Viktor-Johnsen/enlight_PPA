@@ -2,7 +2,7 @@ import pickle
 import pandas as pd
 
 # --- Load results ---
-with open("mult_nbs_results__PaP_0.0.pkl", "rb") as f:
+with open("mult_nbs_results__PaF_0_[0.  0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1. ].pkl", "rb") as f:
     results = pickle.load(f)
 
 betas = list(results["res_gamma"].keys())

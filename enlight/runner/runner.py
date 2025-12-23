@@ -8,6 +8,7 @@ from enlight.model import EnlightModel
 import enlight.utils as utils
 from enlight.data_ops import DataVisualizer
 from enlight.data_ops import ResultsVisualizer
+from ppa_input import load_plot_configs
 
 
 class EnlightRunner:
@@ -25,7 +26,8 @@ class EnlightRunner:
 
         self._load_config()
         self._create_directories()
-        self._load_plot_config()
+        # self._load_plot_config()
+        self.palette = load_plot_configs()
 
     def _load_config(self) -> None:
         """Load configuration from YAML file."""

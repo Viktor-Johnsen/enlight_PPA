@@ -47,30 +47,30 @@ solver_name: "gurobi"
 bidding_zones:
   # EU Member States (alphabetically)
   # - AT   # Austria
-  # - BE   # Belgium
+  - BE   # Belgium
   # - BG   # Bulgaria
   # - CZ   # Czech Republic
-  # - DELU # Germany and Luxembourg
+  - DELU # Germany and Luxembourg
   - DK1  # Denmark West
   - DK2  # Denmark East
   # - EE   # Estonia
   # - EL   # Greece
   # - ES   # Spain
-  - FI   # Finland
+  # - FI   # Finland
   # - FR   # France
   # - HR   # Croatia
   # - HU   # Hungary
   # - IT   # Italy
   # - LT   # Lithuania
   # - LV   # Latvia
-  # - NL   # Netherlands
+  - NL   # Netherlands
   # - PL   # Poland
   # - PT   # Portugal
   # - RO   # Romania
-  - SE1  # Sweden zone 1
-  - SE2  # Sweden zone 2
-  - SE3  # Sweden zone 3
-  - SE4  # Sweden zone 4
+  # - SE1  # Sweden zone 1
+  # - SE2  # Sweden zone 2
+  # - SE3  # Sweden zone 3
+  # - SE4  # Sweden zone 4
   # - SEM  # Single Electricity Market (Ireland and Northern Ireland)
   # - SI   # Slovenia
   # - SK   # Slovakia
@@ -82,11 +82,11 @@ bidding_zones:
   # - GB   # Great Britain
   # - ME   # Montenegro
   # - MK   # North Macedonia
-  - NO1  # Norway zone 1
-  - NO2  # Norway zone 2
-  - NO3  # Norway zone 3
-  - NO4  # Norway zone 4
-  - NO5  # Norway zone 5
+  # - NO1  # Norway zone 1
+  # - NO2  # Norway zone 2
+  # - NO3  # Norway zone 3
+  # - NO4  # Norway zone 4
+  # - NO5  # Norway zone 5
   # - RS   # Serbia
   # - XK   # Kosovo
 

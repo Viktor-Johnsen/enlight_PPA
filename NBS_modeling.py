@@ -11,6 +11,8 @@ from PPA_modeling import load_plot_configs, unify_palette_cyclers, prettify_subp
 
 import pandas as pd
 
+NORMALIZE_INPUTS = True
+
 ###
 def var_to_pandas(var, name=None):
     """
@@ -935,23 +937,32 @@ class NBSMultModel:
             results_volume[beta_O] = {}
             models[beta_O] = {}
 
+            # Model solves much faster if set between 0 and 1 (if demand is higher than the Producer forecast the values are still close to 1)
+            if NORMALIZE_INPUTS:
+                self.nbs_mult_logger.info("CAUTION: the Producer forecast (and batt. power) and Buyer consumption is being normalized.")
+                self.P_fore_w_max = self.P_fore_w.max()
+                self.P_fore_w_norm = self.P_fore_w / self.P_fore_w_max
+                self.P_batt_norm = self.P_batt / self.P_fore_w_max
+                self.L_t_norm = self.L_t / self.P_fore_w_max
+
             for beta_D in beta_D_list:        
                 # Initialize NBS instance.
                 t0b = time.time()
                 nbs_model = NBSModel(
                     PPA_profile=self.PPA_profile,  # BL or PaP
                     BL_compliance_perc=self.BL_compliance_perc,
-                    P_fore_w=self.P_fore_w,
-                    P_batt = self.P_batt,
+                    P_fore_w=(self.P_fore_w_norm if NORMALIZE_INPUTS else self.P_fore_w),###
+                    P_batt=(self.P_batt_norm if NORMALIZE_INPUTS else self.P_batt),###
                     batt_eta=self.batt_eta,
                     batt_Crate=self.batt_Crate,
-                    L_t=self.L_t,
+                    L_t=(self.L_t_norm if NORMALIZE_INPUTS else self.L_t),###
                     lambda_DA_w=self.lambda_DA_w,
                     WTP=self.WTP,
                     # add_batt=False, # automatically defined as "True" if 'BL' and no bool is given.
                     hp=hybrid_plant_model,  # the optimal solution of the hybrid plant in DA math. model
                     S_LB=self.S_LB, S_UB=self.S_UB,  # PPA price
-                    M_LB=self.M_LB, M_UB=self.M_UB,  # BL volume
+                    M_LB=self.M_LB,
+                    M_UB=(1 if NORMALIZE_INPUTS else self.M_UB),  # BL volume
                     gamma_LB=self.gamma_LB, gamma_UB=self.gamma_UB,  # PaP volume
                     beta_D=beta_D, beta_O=beta_O, alpha=self.alpha,
                     nbs_model_logger=self.nbs_mult_logger,
@@ -971,8 +982,12 @@ class NBSMultModel:
                     self.nbs_mult_logger.info("Solved to optimality!")
                     results_S[beta_O][beta_D] = nbs_model.S.X
                     if nbs_model.BL:
-                        results_volume[beta_O][beta_D] = nbs_model.M.X
+                        if NORMALIZE_INPUTS:
+                            results_volume[beta_O][beta_D] = nbs_model.M.X * self.P_fore_w_max
+                        else:
+                            results_volume[beta_O][beta_D] = nbs_model.M.X
                     elif nbs_model.PPA_profile in ['PaF', 'PaP']:
+                        # No need for checking for normalization. It's already between 0 and 1.
                         results_volume[beta_O][beta_D] = nbs_model.gamma.X
                 elif nbs_model.model.status == GRB.TIME_LIMIT:
                     self.nbs_mult_logger.info(f"Stopped due to time limit: S: {nbs_model.S.Xn:.2f}")

@@ -11,6 +11,9 @@ import enlight.utils as utils
 from ppa_input import PaP2DA, BL2DA
 PPA_profile_type: TypeAlias = PaP2DA | BL2DA
 
+ADJUST_FLEX = 1
+ADJUST_TRANS = 1
+
 class EnlightModel:
     """
     Electricity market optimization model using Linopy.
@@ -81,19 +84,6 @@ class EnlightModel:
         Note: Unused variables will be excluded from the model unless referenced
                 in the objective or constraints.
         """
-        ######### If including PPAs... #########
-        # Recalculate the hourly cfs to scale them according to the PaP
-        # Select the power forecast of the relevant VRE tech in the PPA zone:
-        # Modify the forecasts of the "free" VREs:
-        fore_on_wind = self.data.wind_onshore_production[self.PaP2DA.z]
-        fore_on_wind_cf = fore_on_wind / fore_on_wind.max()
-        
-        fore_off_wind = self.data.wind_offshore_production[self.PaP2DA.z]
-        fore_off_wind_cf = fore_off_wind / fore_off_wind.max()
-
-        fore_solar_pv = self.data.solar_pv_production[self.PaP2DA.z]
-        fore_solar_pv_cf = fore_solar_pv / fore_solar_pv.max()
-
         # Default production forecasts for solar and wind are given from the data.
         # These are reduced according to the capacity contracted in a PPA.
         # For a "pure" DA model, the if-statement is clearly skipped
@@ -102,6 +92,19 @@ class EnlightModel:
         self.solar_pv_production = self.data.solar_pv_production.copy()
     
         if self.PPA:
+             ######### If including PPAs... #########
+            # Recalculate the hourly cfs to scale them according to the PaP
+            # Select the power forecast of the relevant VRE tech in the PPA zone:
+            # Modify the forecasts of the "free" VREs:
+            fore_on_wind = self.data.wind_onshore_production[self.PaP2DA.z]
+            fore_on_wind_cf = fore_on_wind / fore_on_wind.max()
+            
+            fore_off_wind = self.data.wind_offshore_production[self.PaP2DA.z]
+            fore_off_wind_cf = fore_off_wind / fore_off_wind.max()
+
+            fore_solar_pv = self.data.solar_pv_production[self.PaP2DA.z]
+            fore_solar_pv_cf = fore_solar_pv / fore_solar_pv.max()
+
             # Initialize a practically empty dataframe to use as upper bound for the PPA vars
             PPA_upper = (self.data.wind_onshore_production * 0).copy()
             # Update the upper to correspond to the capacity contracted in the PaP PPA
@@ -174,7 +177,7 @@ class EnlightModel:
         # Shape: (T, Z)
         self.demand_flexible_classic_bid = self.model.add_variables(
             lower=0,
-            upper=self.data.flexible_demands_dfs['demand_flexible_classic']['capacity'],  # Shape: (T, Z)
+            upper=ADJUST_FLEX * self.data.flexible_demands_dfs['demand_flexible_classic']['capacity'],  # Shape: (T, Z)
             coords=[self.times, self.bidding_zones],
             dims=["T", "Z"],
             name='demand_flexible_classic_bid'
@@ -237,7 +240,7 @@ class EnlightModel:
         # upper bound = BESS power capacity repeated for all time steps
         self.bess_units_bid = self.model.add_variables(
             lower=0,
-            upper=self.data.bess_units_el_cap,  # np.array
+            upper=ADJUST_FLEX * self.data.bess_units_el_cap,  # np.array
             coords=[self.times, self.data.bidding_zones],
             dims=["T", "Z"],
             name='bess_units_bid'
@@ -260,7 +263,7 @@ class EnlightModel:
         # PtX bid
         self.ptx_units_bid = self.model.add_variables(
             lower=0,
-            upper=self.data.ptx_units_el_cap,
+            upper=ADJUST_FLEX * self.data.ptx_units_el_cap,
             coords=[self.times, self.data.ptx_units_id],
             dims=["T", "L_PtX"],
             name='ptx_units_bid'
@@ -269,7 +272,7 @@ class EnlightModel:
         #  District heating bid for power-to-heat units
         self.dh_units_bid = self.model.add_variables(
             lower=0,
-            upper=self.data.dh_units_el_cap,
+            upper=ADJUST_FLEX * self.data.dh_units_el_cap,
             coords=[self.times, self.data.dh_units_id],
             dims=["T", "L_DH"],
             name='dh_units_bid'
@@ -283,8 +286,8 @@ class EnlightModel:
         )
         
         self.lineflow = self.model.add_variables(
-            lower = -self.data.lines_b_to_a_cap,  # shape: (T, L)
-            upper = self.data.lines_a_to_b_cap,
+            lower = - (ADJUST_TRANS) * self.data.lines_b_to_a_cap,  # shape: (T, L)
+            upper = ADJUST_TRANS * self.data.lines_a_to_b_cap,
             coords = [self.times, self.data.line_labels],
             dims=["T", "L"],
             name='lineflow'

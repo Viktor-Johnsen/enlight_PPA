@@ -114,7 +114,7 @@ class NBSRunner:
             S_LB=0,
             S_UB=self.S_UB,
             M_LB=0,
-            M_UB=self.P_vre,
+            M_UB=self.ppa_data.P_vre,  # this is overwritten later if using x_tot_Z since then P_vre=1 MW in all cases...
             gamma_LB=0,
             gamma_UB=1,
             beta_D=0.5,
@@ -228,7 +228,7 @@ class NBSRunner:
             S_LB=self.nbs_setup.S_LB,  # Minimum PPA strike price
             S_UB=self.nbs_setup.S_UB,  # Maximum PPA strike price
             M_LB=self.nbs_setup.M_LB,  # BL: Minimum baseload volume
-            M_UB=self.nbs_setup.M_UB,  # BL: Maximum baseload volume
+            M_UB=(self.P_fore_w.max() if self.x_tot_Z > 0 else self.nbs_setup.M_UB),  # BL: Maximum baseload volume
             gamma_LB=self.nbs_setup.gamma_LB, # PaP: Minimum PPA capacity share volume
             gamma_UB=self.nbs_setup.gamma_UB, # PaP: Minimum PPA capacity share volume
             alpha=self.nbs_setup.alpha,  # CVaR: Tail of interest for CVaR
@@ -267,7 +267,7 @@ class NBSRunner:
 if __name__=="__main__":
     t0 = time.time()
     # Setup hyperparameters
-    PPA_profile = "PaF"
+    PPA_profile = "PaP"
     BL_compliance_perc = 0
     PPA_zone = "DK2"
 
@@ -275,7 +275,7 @@ if __name__=="__main__":
     P_vre = 1  # MW
     x_buyer = 0.3  # ratio of average buyer power consumption relative to capacity of Producer VRE
     y_batt = 0.25  # MW_batt / MW_VRE
-    S_UB = 50  # €/MWh
+    S_UB = 30  # €/MWh
 
     # Instantiate objects and load power price results from DA market model
     nbs_runner = NBSRunner(
@@ -288,14 +288,14 @@ if __name__=="__main__":
                     y_batt=y_batt,
                     S_UB=S_UB,
     )
-
+    print(nbs_runner.da_data_dict["scenario_1"].bidding_zones)
     # nbs_runner.single_nbs(scenario_name="scenario_2")
     # d=nbs_runner.nbs_model
     # print(f"S = {d.S.X:.2f} €/MWh, volume = {d.M.X if d.PPA_profile=="BL" else d.gamma.X:.2f} {"MW" if d.PPA_profile=="BL" else "%"}")
 
     # Define ranges for beta
-    beta_D_list = np.round(np.arange(0.0,0.41, 0.2), 2)  # avoid floating point issues
-    beta_O_list = np.round(np.arange(0.0,0.41, 0.2), 2)  # avoid floating point issues
+    beta_D_list = np.round(np.arange(0.0,1.01, 0.2), 2)  # avoid floating point issues
+    beta_O_list = np.round(np.arange(0.0,1.01, 0.2), 2)  # avoid floating point issues
     nbs_runner.mult_nbs(beta_O_list=beta_O_list,
                         beta_D_list=beta_D_list)
 

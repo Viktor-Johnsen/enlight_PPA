@@ -196,8 +196,14 @@ class PPAInputData:
 
     This function has two options. One intended for analyses from an
     individual stakeholder perspective and one from system perspective:
-    - Individual: Use P_vre if you want to give a physical capacity for the Producer portfolio
-    - System: Use x_tot_Z if you want to assign a share of the total zonal capacity to the Producer portfolio
+    - Individual: Use the following parameters if you want to give a physical capacity for the Producer portfolio.
+        - P_vre
+        - x_pv, x_wind_on, x_wind_off
+        - x_buyer
+    - System: If you want to assign a share of the total zonal capacity to the Producer portfolio.
+        - x_tot_Z -- this parameter scales the Producer VRE capacity based on the total zonal capacity.
+                  -- further, it also scales the buyer to maintain the ratio of:
+                  -- mean inflex zonal cons. to total VRE capacity.
     '''
     # Bidding zone of producer and buyer
     Z : str = "DK1"
@@ -312,6 +318,11 @@ class PPAInputCalcs:
 
         for tech in range(len(attrs_ppa_cfg)):
             if self.ppa_data.x_tot_Z > 0: # capacity share at bidding zone level
+                # If using zonal capacity, we also use the zonal capacity shares. It's easier that way.
+                # Overwrite, x_pv, x_wind_on and x_wind_off
+                vre_max = getattr(self.da_data, attrs_fore[tech]).max()[self.ppa_data.Z]
+                value = vre_max / self.P_vre_Z_tot  # e.g. solar_pv_production.max() / P_vre_Z_tot -- in the PPA zone
+                setattr(self.ppa_data, attrs_ppa_cfg[tech], value)
                 # e.g. for PV: value = x_pv * x_tot_Z * (P_pv[Z] + P_onwind[Z] + P_offwind[Z])
                 value = getattr(self.ppa_data, attrs_ppa_cfg[tech]) * self.P_vre_Z
             else:
@@ -346,7 +357,14 @@ class PPAInputCalcs:
         '''
         Check that the VRE, batt and buyer consumption levels are indeed below the zonal maximum.
         '''
-        self.E_buyer = 8760 * self.ppa_data.x_buyer * self.P  # MWh/year
+        # Calculate the ratio of x_buyer for each bidding zone included
+        if self.ppa_data.x_tot_Z > 0: # capacity share at bidding zone level
+            self.x_buyer_Z = (self.da_data.demand_inflexible_classic.mean()[self.ppa_data.Z]
+                        / self.P_vre_Z_tot)
+            self.E_buyer = 8760 * self.x_buyer_Z * self.P # MWh/year
+        else:
+            self.E_buyer = 8760 * self.ppa_data.x_buyer * self.P  # MWh/year
+
         if self.E_buyer <= self.da_data.demand_inflexible_classic.sum(axis=0)[self.ppa_data.Z]:
             B_fore = self.E_buyer * self.fore_inflex_classic_pu
             self.B_fore = B_fore  # pd.Series
@@ -474,14 +492,14 @@ if __name__=="__main__":
 
     ppa_data = PPAInputData(
         Z=PPA_zone,
-        P_vre=1,  # MW
+        P_vre=5e3/20,  # MW
         x_tot_Z=0,
         x_pv=0.5,
-        x_wind_on=0.3,
-        x_wind_off=0.2,
-        y_batt=0.25,  # p_batt/p_vre,
+        x_wind_on=0.1,
+        x_wind_off=0.4,
+        y_batt=0.02,  # p_batt/p_vre,
         batt_Crate=1,
-        x_buyer=0.4,
+        x_buyer=0.32,
         ppa_logger=logger,
     )
 
@@ -498,11 +516,11 @@ if __name__=="__main__":
         S_LB=0,
         S_UB=80,
         M_LB=0,
-        M_UB=1,
+        M_UB=ppa_data.P_vre,
         gamma_LB=0,
         gamma_UB=1,
-        beta_D=0.3,
-        beta_O=0.5,
+        beta_D=0.5,
+        beta_O=0.15,
         alpha=0.75,
         nbs_setup_logger=logger,
     )
@@ -549,7 +567,7 @@ if __name__=="__main__":
     if PPA_profile == "BL":
         ax[0].axhline(nbs_model.M.X, xmin=0, xmax=8760, label="M: PPA volume", c='r')
     elif PPA_profile in ["PaP", "PaF"]:
-        ax[0].axhline(nbs_model.gamma.X * ppa_calcs.P_fore, xmin=0, xmax=8760, label=r"$\gamma$: PPA volume", c='r') 
+        ax[0].plot(nbs_model.gamma.X * ppa_calcs.P_fore, label=r"$\gamma$: PPA volume", c='r') 
     ax[0].set_title(f"{scenario_name}")
     ppa_calcs.lambda_DA.plot(ax=ax[1], label="lambda_DA")
     ax[1].axhline(nbs_model.S.X, xmin=0, xmax=8760, label="S: PPA price", c='r')
