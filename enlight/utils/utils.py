@@ -197,7 +197,7 @@ def save_model_results(self):#, week: int):
             "lineflow_sol": get_solution(self.lineflow),
         })
         print("add PaP sols to res dict")
-        if self.PPA:
+        if self.PaP:
             self.results_dict.update({
                 # Offers under a PaP
                 "wind_onshore_PaP_offer_sol": get_solution(self.wind_onshore_PaP_offer),
@@ -319,9 +319,9 @@ def save_model_results(self):#, week: int):
         VRE_costs = dict(zip(vre_list, [self.data.wind_onshore_bid_price, self.data.wind_offshore_bid_price, self.data.solar_pv_bid_price, self.data.hydro_ror_bid_price]))
         
         print("make PPA vre list")
-        if self.PPA:
+        if self.PaP:
             vre_ppa_list = ['wind_onshore_PaP_offer_sol', 'wind_offshore_PaP_offer_sol', 'solar_pv_PaP_offer_sol']
-            VRE_PPA_costs = dict(zip(vre_ppa_list, [-self.PaP2DA.s, -self.PaP2DA.s, -self.PaP2DA.s]))
+            VRE_PPA_costs = dict(zip(vre_ppa_list, [-self.PPA2DA.s, -self.PPA2DA.s, -self.PPA2DA.s]))
         else:
             vre_ppa_list = None
 
@@ -360,7 +360,7 @@ def save_model_results(self):#, week: int):
             self.results_econ["costs"][vre_] = (self.results_dict[vre] * VRE_costs[vre]).sum(axis=0)
         print("calculate the revs and costs (true and perceived) of vres under paps")
         # Insert PPA calcs here
-        if self.PPA:
+        if self.PaP:
             for vre_ppa in vre_ppa_list:
                 vre_ppa_ = vre_ppa.replace("_offer_sol", "")  # prettifying keys
                 print("in res_dict")
@@ -376,7 +376,7 @@ def save_model_results(self):#, week: int):
 
                 # Revs are pure PaP
                 print("in econ: revs / res_dict")
-                self.results_econ["revenues"][vre_ppa_] = self.results_dict[vre_ppa].sum(axis=0) * self.PaP2DA.s
+                self.results_econ["revenues"][vre_ppa_] = self.results_dict[vre_ppa].sum(axis=0) * self.PPA2DA.s
                 print("in econ: costs / res dict / vre_costs")
                 self.results_econ["costs"][vre_ppa_] = self.results_dict[vre_ppa].sum(axis=0) * VRE_costs[vre_ppa.replace("_PaP", "")]
         else:
@@ -391,20 +391,20 @@ def save_model_results(self):#, week: int):
             self.results_econ["costs"][dem_] = (self.results_dict[dem].mul(self.results_dict['electricity_prices'], axis='columns')).sum(axis=0)
         print("Add PaP calc for inflex dem")
         # Add PaP calculation for the inflexible demand
-        if self.PPA:
+        if self.PaP:
             self.results_econ['profits_sw']['demand_inflexible_classic'] = (self.results_econ["revenues"]['demand_inflexible_classic']
                                                - self.results_econ["costs"]['demand_inflexible_classic'])
             # Overwrite the revenues and costs... quick fix
             self.results_econ["revenues"]['demand_inflexible_classic'] = 0
             self.results_econ["costs"]['demand_inflexible_classic'] = (
-                (self.wind_onshore_PaP_fore
-                 + self.wind_offshore_PaP_fore
-                 + self.solar_pv_PaP_fore
+                (self.wind_onshore_PPA_fore
+                 + self.wind_offshore_PPA_fore
+                 + self.solar_pv_PPA_fore
                  ) * self.results_dict['electricity_prices']
                  - (self.results_dict['wind_onshore_PaP_offer_sol']
                  + self.results_dict['wind_offshore_PaP_offer_sol']
                  + self.results_dict['solar_pv_PaP_offer_sol']
-                 ) * self.PaP2DA.s
+                 ) * self.PPA2DA.s
                  - self.results_dict['demand_inflexible_classic_bid_sol']
                  * self.results_dict['electricity_prices']
             ).sum(axis=0)
@@ -451,9 +451,10 @@ def save_model_results(self):#, week: int):
             self.results_econ['profits'][k] = self.results_econ['revenues'][k] - self.results_econ['costs'][k]
             self.results_econ['profits_tot'][k] = float(np.round(self.results_econ['profits'][k].sum()/1e9,4))
         print("cs")
+
         # Compare social welfare from this function and from the model.
         self.results_econ["consumer surplus"] = sum(map(lambda x: self.results_econ['profits'][x.replace("_bid_sol","")].sum(), dem_list+dem_units_list))
-        if self.PPA:
+        if self.PaP:
             self.results_econ["consumer surplus perceived"] = (
                 sum(
                     self.results_econ['profits_sw'][x.replace("_bid_sol", "")].sum()
@@ -471,7 +472,7 @@ def save_model_results(self):#, week: int):
         print("sw")
         self.results_econ["social welfare"] =  self.results_econ["producer surplus"] + self.results_econ["consumer surplus"]
         print("sw perceived")
-        if self.PPA:
+        if self.PaP:
             self.results_econ["social welfare perceived"] =  self.results_econ["producer surplus perceived"] + self.results_econ["consumer surplus perceived"]
         else:
             # Without PaP there is no "consumer surplus perceived"

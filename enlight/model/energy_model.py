@@ -8,7 +8,7 @@ from typing import TypeAlias
 from enlight.data_ops.data_loader import DataLoader
 import enlight.utils as utils
 
-from ppa_input import PaP2DA, BL2DA
+from ppa2da import PaP2DA, BL2DA
 PPA_profile_type: TypeAlias = PaP2DA | BL2DA
 
 ADJUST_FLEX = 1
@@ -32,7 +32,7 @@ class EnlightModel:
                  dataloader_obj : DataLoader,
                  scenario_name : str,
                  logger : Logger,
-                 PaP2DA : PPA_profile_type = None):
+                 PPA2DA : PPA_profile_type = None):
         # Initialize logger
         self.logger = logger
         self.data = dataloader_obj
@@ -44,13 +44,20 @@ class EnlightModel:
         simulation_path=Path(f'simulations/{self.scenario_name}')
         self.simulation_path = simulation_path
 
-        if PaP2DA is None:
+        if PPA2DA is None:
             self.logger.info("Running Enlight reference model")
-            self.PPA = False
-        else:
-            self.logger.info("Running Enlight with PPA")
-            self.PPA = True  # Use as a bool to easily include PPAs or not
-            self.PaP2DA = PaP2DA
+            self.PaP = False
+            self.BL = False
+        elif type(PPA2DA) == PaP2DA:
+            self.logger.info("Running Enlight with PPA: PaP")
+            self.PaP = True  # Use as a bool to easily include PPAs or not
+            self.BL = False
+            self.PPA2DA = PPA2DA
+        elif type(PPA2DA) == BL2DA:
+            self.logger.info("Running Enlight with PPA: BL")
+            self.PaP = False  # Use as a bool to easily include PPAs or not
+            self.BL = True
+            self.PPA2DA = PPA2DA
 
         self.model = linopy.Model()
 
@@ -87,41 +94,73 @@ class EnlightModel:
         # Default production forecasts for solar and wind are given from the data.
         # These are reduced according to the capacity contracted in a PPA.
         # For a "pure" DA model, the if-statement is clearly skipped
+        
+        # VRE
         self.wind_onshore_production = self.data.wind_onshore_production.copy()
         self.wind_offshore_production = self.data.wind_offshore_production.copy()
         self.solar_pv_production = self.data.solar_pv_production.copy()
+
+        # BESS
+        self.bess_units_el_cap = self.data.bess_units_el_cap.copy()
+        self.bess_units_storage_cap = self.data.bess_units_storage_cap.copy()
     
-        if self.PPA:
+        if self.PaP or self.BL:
              ######### If including PPAs... #########
             # Recalculate the hourly cfs to scale them according to the PaP
             # Select the power forecast of the relevant VRE tech in the PPA zone:
             # Modify the forecasts of the "free" VREs:
-            fore_on_wind = self.data.wind_onshore_production[self.PaP2DA.z]
+            fore_on_wind = self.data.wind_onshore_production[self.PPA2DA.z]
             fore_on_wind_cf = fore_on_wind / fore_on_wind.max()
             
-            fore_off_wind = self.data.wind_offshore_production[self.PaP2DA.z]
+            fore_off_wind = self.data.wind_offshore_production[self.PPA2DA.z]
             fore_off_wind_cf = fore_off_wind / fore_off_wind.max()
 
-            fore_solar_pv = self.data.solar_pv_production[self.PaP2DA.z]
+            fore_solar_pv = self.data.solar_pv_production[self.PPA2DA.z]
             fore_solar_pv_cf = fore_solar_pv / fore_solar_pv.max()
 
             # Initialize a practically empty dataframe to use as upper bound for the PPA vars
             PPA_upper = (self.data.wind_onshore_production * 0).copy()
-            # Update the upper to correspond to the capacity contracted in the PaP PPA
-            # Onshore wind
-            self.wind_onshore_PaP_fore = PPA_upper.copy()
-            self.wind_onshore_PaP_fore[self.PaP2DA.z] = self.PaP2DA.gamma * self.PaP2DA.on_wind_el_cap * fore_on_wind_cf
-            # Offshore wind
-            self.wind_offshore_PaP_fore = PPA_upper.copy()
-            self.wind_offshore_PaP_fore[self.PaP2DA.z] = self.PaP2DA.gamma * self.PaP2DA.off_wind_el_cap * fore_off_wind_cf
-            # Solar PV
-            self.solar_pv_PaP_fore = PPA_upper.copy()
-            self.solar_pv_PaP_fore[self.PaP2DA.z] = self.PaP2DA.gamma * self.PaP2DA.solar_pv_el_cap * fore_solar_pv_cf
+            # Update the upper to correspond to the capacity contracted in the PaP PPA/BL
+            
+            # VREs
+            self.wind_onshore_PPA_fore = PPA_upper.copy()
+            self.wind_offshore_PPA_fore = PPA_upper.copy()
+            self.solar_pv_PPA_fore = PPA_upper.copy()
+
+            if self.PaP:
+                # Onshore wind
+                self.wind_onshore_PPA_fore[self.PPA2DA.z] = self.PPA2DA.gamma * self.PPA2DA.on_wind_el_cap * fore_on_wind_cf
+                # Offshore wind
+                self.wind_offshore_PPA_fore[self.PPA2DA.z] = self.PPA2DA.gamma * self.PPA2DA.off_wind_el_cap * fore_off_wind_cf
+                # Solar PV
+                self.solar_pv_PPA_fore[self.PPA2DA.z] = self.PPA2DA.gamma * self.PPA2DA.solar_pv_el_cap * fore_solar_pv_cf
+
+            elif self.BL:
+                # Onshore wind
+                self.wind_onshore_PPA_fore[self.PPA2DA.z] = self.PPA2DA.on_wind_el_cap * fore_on_wind_cf
+                # Offshore wind
+                self.wind_offshore_PPA_fore[self.PPA2DA.z] = self.PPA2DA.off_wind_el_cap * fore_off_wind_cf
+                # Solar PV
+                self.solar_pv_PPA_fore[self.PPA2DA.z] = self.PPA2DA.solar_pv_el_cap * fore_solar_pv_cf
+
+                # BESS
+                self.BESS_PPA_upper_P = (self.data.bess_units_el_cap * 0).copy()
+                self.BESS_PPA_upper_E = (self.data.bess_units_storage_cap * 0).copy()
+                self.BESS_PPA_upper_P[:,self.bidding_zones.index(self.PPA2DA.z)] += self.PPA2DA.P_batt
+                self.BESS_PPA_upper_E[:,self.bidding_zones.index(self.PPA2DA.z)] += self.PPA2DA.E_batt
+                # Subtract the power and energy capacity of the Producer BESS in the PPA zone
+                self.bess_units_el_cap -= self.BESS_PPA_upper_P
+                self.bess_units_storage_cap -= self.BESS_PPA_upper_E
+
+                # Compliance rate from float to array:
+                self.compl_rate_vectorized = (self.PPA2DA.compl_rate
+                                              * (np.array(self.bidding_zones) == self.PPA2DA.z)
+                                              )
 
             # Update the forecasts for the VRE capacities not included in the PPA
-            self.wind_onshore_production -= self.wind_onshore_PaP_fore
-            self.wind_offshore_production -= self.wind_offshore_PaP_fore
-            self.solar_pv_production -= self.solar_pv_PaP_fore
+            self.wind_onshore_production -= self.wind_onshore_PPA_fore
+            self.wind_offshore_production -= self.wind_offshore_PPA_fore
+            self.solar_pv_production -= self.solar_pv_PPA_fore
         ######### PPA calculations over #########
         # Onshore wind production [MW]
         # Shape: (T, Z)
@@ -240,21 +279,21 @@ class EnlightModel:
         # upper bound = BESS power capacity repeated for all time steps
         self.bess_units_bid = self.model.add_variables(
             lower=0,
-            upper=ADJUST_FLEX * self.data.bess_units_el_cap,  # np.array
+            upper=ADJUST_FLEX * self.bess_units_el_cap,  # np.array
             coords=[self.times, self.data.bidding_zones],
             dims=["T", "Z"],
             name='bess_units_bid'
         )
         self.bess_units_offer = self.model.add_variables(
             lower=0,
-            upper=self.data.bess_units_el_cap,  # np.array
+            upper=self.bess_units_el_cap,  # np.array
             coords=[self.times, self.data.bidding_zones],
             dims=["T", "Z"],
             name='bess_units_offer'
         )
         self.bess_units_SOC = self.model.add_variables(
             lower=0,
-            upper=self.data.bess_units_storage_cap,  # np.array
+            upper=self.bess_units_storage_cap,  # np.array
             coords=[self.times, self.data.bidding_zones],
             dims=["T", "Z"],
             name='bess_units_SOC'
@@ -294,41 +333,108 @@ class EnlightModel:
         )
 
         # A PPA changes the offers from VREs (and batts in the case of BL)
-        if self.PPA:
+        if self.PaP:
             # Add variables for the VRE offers contracted as part of the PaP
             self.wind_onshore_PaP_offer = self.model.add_variables(
                 lower=0,
-                upper=self.wind_onshore_PaP_fore.values,  # 0's in all other bidding zones than PPA zone
+                upper=self.wind_onshore_PPA_fore.values,  # 0's in all other bidding zones than PPA zone
                 coords=[self.times, self.bidding_zones],
                 dims=["T", "Z"],
                 name='wind_onshore_PaP_offer'
             )
             self.wind_offshore_PaP_offer = self.model.add_variables(
                 lower=0,
-                upper=self.wind_offshore_PaP_fore.values,
+                upper=self.wind_offshore_PPA_fore.values,
                 coords=[self.times, self.bidding_zones],
                 dims=["T", "Z"],
                 name='wind_offshore_PaP_offer'
             )
             self.solar_pv_PaP_offer = self.model.add_variables(
                 lower=0,
-                upper=self.solar_pv_PaP_fore.values,
+                upper=self.solar_pv_PPA_fore.values,
                 coords=[self.times, self.bidding_zones],
                 dims=["T", "Z"],
                 name='solar_pv_PaP_offer'
             )
+        if self.BL:
+            # Add variables for the VRE offers contracted as part of the BL
+            self.wind_onshore_BL_offer = self.model.add_variables(
+                lower=0,
+                upper=self.wind_onshore_PPA_fore.values,  # 0's in all other bidding zones than PPA zone
+                coords=[self.times, self.bidding_zones],
+                dims=["T", "Z"],
+                name='wind_onshore_BL_offer'
+            )
+            self.wind_offshore_BL_offer = self.model.add_variables(
+                lower=0,
+                upper=self.wind_offshore_PPA_fore.values,
+                coords=[self.times, self.bidding_zones],
+                dims=["T", "Z"],
+                name='wind_offshore_BL_offer'
+            )
+            self.solar_pv_BL_offer = self.model.add_variables(
+                lower=0,
+                upper=self.solar_pv_PPA_fore.values,
+                coords=[self.times, self.bidding_zones],
+                dims=["T", "Z"],
+                name='solar_pv_BL_offer'
+            )
+            # Add the new BATTERY and v_min variable
+            self.bess_units_BL_ch = self.model.add_variables(
+                lower=0,
+                upper=ADJUST_FLEX * self.BESS_PPA_upper_P,  # np.array
+                coords=[self.times, self.bidding_zones],
+                dims=["T", "Z"],
+                name='bess_units_BL_ch'
+            )
+            self.bess_units_BL_dch = self.model.add_variables(
+                lower=0,
+                upper=self.BESS_PPA_upper_P,  # np.array
+                coords=[self.times, self.bidding_zones],
+                dims=["T", "Z"],
+                name='bess_units_BL_dch'
+            )
+            self.bess_units_BL_SOC = self.model.add_variables(
+                lower=0,
+                upper=self.BESS_PPA_upper_E,  # np.array
+                coords=[self.times, self.bidding_zones],
+                dims=["T", "Z"],
+                name='bess_units_BL_SOC'
+            )
+            V_MIN_UPPER = (self.data.bess_units_el_cap * 0).copy()
+            V_MIN_UPPER[:,self.bidding_zones.index(self.PPA2DA.z)] += self.PPA2DA.m
+            self.v_min_BL = self.model.add_variables(
+                lower=0,
+                upper=V_MIN_UPPER,  # np.array
+                coords=[self.times, self.bidding_zones],
+                dims=["T", "Z"],
+                name='v_min_BL'
+            )
+            self.total_BL_offer = self.model.add_variables(
+                lower=0,
+                # upper=tot cap of PPA vre + P_batt
+                coords=[self.times, self.bidding_zones],
+                dims=["T", "Z"],
+                name='total_BL_offer'
+            )
+
 
     def _build_constraints(self):
         """
         Placeholder for adding model constraints.
         """
         self.power_balance = self.model.add_constraints(
+            #BAU:
             (self.wind_onshore_offer
-             + (self.wind_onshore_PaP_offer if self.PPA else 0)
              + self.wind_offshore_offer
-             + (self.wind_offshore_PaP_offer if self.PPA else 0)
              + self.solar_pv_offer
-             + (self.solar_pv_PaP_offer if self.PPA else 0)
+             # PaP
+             + (self.wind_onshore_PaP_offer if self.PaP else 0)
+             + (self.wind_offshore_PaP_offer if self.PaP else 0)
+             + (self.solar_pv_PaP_offer if self.PaP else 0)
+             # BL
+             + (self.total_BL_offer if self.BL else 0)
+             # BAU cont.:
              + self.hydro_ror_offer
              + self.conventional_units_offer.dot(self.data.G_Z_xr)  # type: ignore
              + self.hydro_res_units_offer.dot(self.data.G_hydro_res_Z_xr)
@@ -409,13 +515,44 @@ class EnlightModel:
         self.bess_units_SOC_balance = self.model.add_constraints(  # Shape: (T, G_bess)
             # Identical to pumped hydro storage SOC.
             self.bess_units_SOC.diff(n=1, dim="T")
-            - self.data.bess_initial_SOC_x_storage_cap_xr
+            - self.data.bess_initial_SOC_x_storage_cap_xr * (0 if self.BL else 1)
             ==
             self.bess_units_bid * self.data.bess_charging_efficiency
             - self.bess_units_offer / self.data.bess_discharging_efficiency
             ,
             name='bess_SOC_balance'
         )
+
+        if self.BL:
+            self.bess_units_SOC_BL_balance = self.model.add_constraints(  # Shape: (T, G_bess)
+                # Identical to pumped hydro storage SOC.
+                self.bess_units_BL_SOC.diff(n=1, dim="T")
+                - self.data.bess_initial_SOC_x_storage_cap_xr * 0  # =self.bess_units_BL_SOC.isel(T=0) == 0
+                ==
+                self.bess_units_BL_ch * self.data.bess_charging_efficiency
+                - self.bess_units_BL_dch / self.data.bess_discharging_efficiency
+                ,
+                name='bess_SOC_BL_balance'
+            )
+            self.BL_power_balance = self.model.add_constraints(
+                # Total power offered by Producer on DA market is the
+                # sum of the power "offered" by the individual techs subtracted
+                # by the battery charge.
+                self.total_BL_offer
+                + self.bess_units_BL_ch
+                ==
+                self.solar_pv_BL_offer
+                + self.wind_onshore_BL_offer
+                + self.wind_offshore_BL_offer
+                + self.bess_units_BL_dch
+            )
+            self.v_min_offer = self.model.add_constraints(
+                # Remember that also: v_min_BL.upper = M.
+                self.v_min_BL <= self.total_BL_offer
+            )
+            self.compliance_rate = self.model.add_constraints(
+                self.v_min_BL.sum("T") >= self.compl_rate_vectorized * self.PPA2DA.m * self.T
+            )
 
     def _build_objective(self):
         """
@@ -427,13 +564,21 @@ class EnlightModel:
                 - self.demand_inflexible_classic_bid * self.data.voll_classic
                 - self.demand_flexible_classic_bid * self.data.wtp_classic
                 # Generators:
-                + self.wind_onshore_offer * self.data.wind_onshore_bid_price
-                + (self.wind_onshore_PaP_offer * (-self.PaP2DA.s) if self.PPA else 0)
-                + self.wind_offshore_offer * self.data.wind_offshore_bid_price
-                + (self.wind_offshore_PaP_offer * (-self.PaP2DA.s) if self.PPA else 0)
-                + self.solar_pv_offer * self.data.solar_pv_bid_price
-                + (self.solar_pv_PaP_offer * (-self.PaP2DA.s) if self.PPA else 0)
+                + self.wind_onshore_offer * (0.03 if self.BL else self.data.wind_onshore_bid_price)
+                + self.wind_offshore_offer * (0.03 if self.BL else self.data.wind_offshore_bid_price)
+                + self.solar_pv_offer * (0.03 if self.BL else self.data.solar_pv_bid_price)
                 + self.hydro_ror_offer * self.data.hydro_ror_bid_price
+                # PaP:
+                + (self.wind_onshore_PaP_offer * (-self.PPA2DA.s) if self.PaP else 0)
+                + (self.wind_offshore_PaP_offer * (-self.PPA2DA.s) if self.PaP else 0)
+                + (self.solar_pv_PaP_offer * (-self.PPA2DA.s) if self.PaP else 0)
+                # BL: using 0.05 as price so I can see when the BL offer is marginal.
+                + (self.total_BL_offer * 0.03 if self.BL else 0)
+                
+                # trying smth to eliminate "fake" cyclic charging
+                + ((self.bess_units_BL_dch + self.bess_units_BL_ch) * 1e-6 if self.BL else 0)
+                # trying smth to fakely incentivize increasing v_min
+                # - (self.v_min_BL * 132 if self.BL else 0)
                ).sum()
            
             # Important: variables with different dimensions must be in different parenthesis to be summed correctly

@@ -213,6 +213,9 @@ class NBSRunner:
         # NOT scenario-specific from DataLoader of PPAInputCalcs objects:
         w0 = self.scenario_list[0]
 
+        # CHANGED HERE, just checking the results
+        # self.lambda_DA_w[:,1] *= 0.5 # -> this gives "expected" PaP volume outcome
+
         # 5) Instantiate and run multiple NBSModels in an NBSMultModel
         self.mult_nbs_models = NBSMultModel(
             PPA_profile=self.PPA_profile,  # Type of PPA profile ('PaF', 'PaP', or 'BL')
@@ -288,7 +291,9 @@ if __name__=="__main__":
                     y_batt=y_batt,
                     S_UB=S_UB,
     )
-    print(nbs_runner.da_data_dict["scenario_1"].bidding_zones)
+    # For good measure, check that the scenarios align. If not, uncomment and run the first two lines.
+    for da_obj in nbs_runner.da_data_dict.values():
+        print(da_obj.bidding_zones)
     # nbs_runner.single_nbs(scenario_name="scenario_2")
     # d=nbs_runner.nbs_model
     # print(f"S = {d.S.X:.2f} €/MWh, volume = {d.M.X if d.PPA_profile=="BL" else d.gamma.X:.2f} {"MW" if d.PPA_profile=="BL" else "%"}")

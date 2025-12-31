@@ -22,71 +22,6 @@ from nbs_modeling import NBSModel, generate_data
 def normalize_forecast_power(df: pd.DataFrame, Z: str):
     return df[Z] / df.max()[Z]
 
-@dataclass
-class PaP2DA:
-    '''
-    Purely inputs.
-
-    Pre-selects the data/results needed as inputs to the DA model
-    in order to include PPAs in the model.
-
-    To include a PaP all we need to pass are:
-    - Bidding zone: Z
-    - PPA price: S
-    - PPA volume share: gamma
-    - capacities of the techs in the Producer portfolio
-        - off_wind_el_cap
-        - on_wind_el_cap
-        - solar_pv_el_cap
-    '''
-    # Bidding zone of producer and buyer
-    z : str = "DK1"
-
-    # Producer specs
-    s : float = 5.0  # €/MWh -- PPA price
-    gamma : float = 0.5  # p.u. of Producer total VRE capacity
-    solar_pv_el_cap : float = 0
-    on_wind_el_cap : float = 0
-    off_wind_el_cap : float = 0
-    ppa2da_logger : Logger | None = None
-
-    def __post_init__(self):
-        self.ppa2da_logger = self.ppa2da_logger or utils.setup_logging(log_file="nbs.log")
-        self.ppa2da_logger.info("PaP2DA: Create instance to effectively transfer PPA outcome to DA market.")
-
-@dataclass
-class BL2DA:
-    '''
-    Purely inputs.
-
-    Pre-selects the data/results needed as inputs to the DA model
-    in order to include PPAs in the model.
-
-    To include a PaP all we need to pass are:
-    - Bidding zone: Z
-    - PPA price: S
-    - PPA volume share: gamma
-    - capacities of the techs in the Producer portfolio
-        - off_wind_el_cap
-        - on_wind_el_cap
-        - solar_pv_el_cap
-    '''
-    # Bidding zone of producer and buyer
-    z : str = "DK1"
-
-    # Producer specs
-    s : float = 5.0  # €/MWh -- PPA price
-    m : float = 0.5  # MW -- BL volume
-    solar_pv_el_cap : float = 1
-    on_wind_el_cap : float = 1
-    off_wind_el_cap : float = 1
-    ppa2da_logger : Logger | None = None
-
-    def __post_init__(self):
-        self.ppa2da_logger = self.ppa2da_logger or utils.setup_logging(log_file="nbs.log")
-        self.ppa2da_logger.info("PaP2DA: Create instance to effectively transfer PPA outcome to DA market.")
-
-
 # def week_reduction(fore_power : np.ndarray, lambda_DA : np.ndarray, scen0 : int, n_clusters : int = 4, plot : bool = False):
 #     '''
 #     Reduces the total hours needed to still capture the yearly profits properly.
@@ -350,8 +285,20 @@ class PPAInputCalcs:
             raise Exception(f"FileNotFoundError: Please provide an existing scenario name. No power prices are given under (full file path shown) {prices_file}.")
 
     def calculate_batt_power(self):
-        self.P_batt = self.P * self.ppa_data.y_batt  # MW
-        self.E_batt = self.P_batt / self.ppa_data.batt_Crate  # MWh
+        if self.ppa_data.x_tot_Z > 0:
+            # capacity share at bidding zone level
+            # If using zonal capacity, we also use the zonal capacity shares. It's easier that way.
+            # Overwrite, y_batt and batt_Crate
+            self.P_bess_Z = self.da_data.bess_units_el_cap[0,:][np.array(self.da_data.bidding_zones) == self.ppa_data.Z][0]  # [0] turns array([float]) -> float
+            self.E_bess_Z = self.da_data.bess_units_storage_cap[0,:][np.array(self.da_data.bidding_zones) == self.ppa_data.Z][0]
+
+            self.P_batt = self.P_bess_Z * self.ppa_data.x_tot_Z
+            self.E_batt = self.E_bess_Z * self.ppa_data.x_tot_Z
+            # Overwrite any user-provided y_batt value
+            self.y_batt = self.P_batt / self.P
+        else:
+            self.P_batt = self.P * self.ppa_data.y_batt  # MW
+            self.E_batt = self.P_batt / self.ppa_data.batt_Crate  # MWh
 
     def verify_batt_capacy_and_buyer_load(self):
         '''

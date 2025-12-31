@@ -62,23 +62,31 @@ def unify_palette_cyclers(axs):  # run BEFORE plotting
             ax._get_patches_for_fill = ax._get_lines
         return axs
     
-def prettify_subplots(axs):  # run AFTER plotting
+def prettify_subplots(axs, legend=True, grid=True):  # run AFTER plotting
     if not type(axs) == np.ndarray:
         # Shape of subplots of (1,1)
         ax = axs  # to symbolize that there is only one axis
         ax.spines[['right', 'top']].set_visible(False)  # Remove spines
-        ax.grid(alpha=.25)  # Add opaque gridlines
+        if grid:
+            ax.grid(alpha=.25)  # Add opaque gridlines
+        else:
+            ax.grid(False)
         ax.margins(0.005)  # Remove whitespace inside each plot
         ax.spines[['bottom','left']].set_alpha(0.5)  # Introduce opacity to the x- and y-axes spines
-        ax.legend(bbox_to_anchor=[1, 1.02])
+        if legend:
+            ax.legend(bbox_to_anchor=[1, 1.02], frameon=False)
         return ax
     else:
         for ax in axs:
             ax.spines[['right', 'top']].set_visible(False)  # Remove spines
-            ax.grid(alpha=.25)  # Add opaque gridlines
+            if grid:
+                ax.grid(alpha=.25)  # Add opaque gridlines
+            else:
+                ax.grid(False)
             ax.margins(0.005)  # Remove whitespace inside each plot
             ax.spines[['bottom','left']].set_alpha(0.5)  # Introduce opacity to the x- and y-axes spines
-            ax.legend(bbox_to_anchor=[1, 1.02])
+            if legend:
+                ax.legend(bbox_to_anchor=[1, 1.02], frameon=False)
         return axs
 
 def make_negative_DA_price_mask(times, lambda_DA):

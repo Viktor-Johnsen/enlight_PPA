@@ -99,7 +99,7 @@ class EnlightRunner:
             scenario_name=scenario_name,
             logger=self.logger)
 
-    def run_single_simulation(self, scenario_name : str, PaP2DA = None) -> None:
+    def run_single_simulation(self, scenario_name : str, PPA2DA = None) -> None:
         """
         Run a single simulation and simulation path.
 
@@ -111,7 +111,7 @@ class EnlightRunner:
         self.enlight_model = EnlightModel(
             dataloader_obj=self.data,
             scenario_name=scenario_name,
-            PaP2DA=PaP2DA,
+            PPA2DA=PPA2DA,
             logger=self.logger
         )
         # Run the model
@@ -174,7 +174,7 @@ class EnlightRunner:
     #     # Calls methods
     #     self.data_vis.visualize_NBS_inputs(z0=bidding_zone, prices_path=prices_path)
         
-    def prepare_load_run_single_sim(self, scenario_name, results_path_optional : str = ""):
+    def prepare_load_run_single_sim(self, scenario_name, results_path_optional : str = "", PPA2DA = None):
         '''
         A one-stop-shop for quickly loading the input data and
         running the DA market model, while being sure to use the
@@ -184,7 +184,7 @@ class EnlightRunner:
         self.prepare_data_single_scenario(scenario_name=scenario_name)
         self.load_data_single_simulation(scenario_name=scenario_name)
         results_path = ("/" if len(results_path_optional)>0 else "") + results_path_optional
-        self.run_single_simulation(scenario_name=scenario_name + results_path)
+        self.run_single_simulation(scenario_name=scenario_name + results_path, PPA2DA=PPA2DA)
 
     def prepare_load_run_all_sims(self, results_path_optional : str = ""):
         '''
