@@ -1,6 +1,10 @@
 # ENLIGHT_PPA
 
-European Network for Long-term Insights on Grid prices, Hedging & Trends
+"European Network for Long-term Insights on Grid prices, Hedging & Trends"
+
+This repository is a fork of Enlight () which was initially developed by Marco Saretta and Viktor Guldborg Johnsen.
+
+Modifications and additional work on this fork were performed by Viktor Guldborg Johnsen.
 
 ## Overview
 This repository contains a multi-year market forecast model simulating electricity market clearing across all European bidding zones.  
