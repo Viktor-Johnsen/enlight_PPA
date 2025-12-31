@@ -1,0 +1,16 @@
+
+[project]
+name = "enlight_PPA"
+version = "0.3.0"
+description = "Enlight -- DA and PPA modeling framework"
+dependencies = [
+    "numpy",
+    "pandas",
+]
+
+authors = [
+    {name = "Viktor Johnsen", email = "s203649@dtu.dk"},
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]

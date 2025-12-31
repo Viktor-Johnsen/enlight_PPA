@@ -4,7 +4,7 @@ Main function to execute the Enlight energy scenario runner.
 This function creates an instance of the EnlightRunner, prepares input data,
 and runs a single simulation.
 """
-from enlight.runner import EnlightRunner  # Updated import path
+from enlight_PPA.runners import EnlightRunner  # Updated import path
 from pathlib import Path
 
 if __name__ == "__main__":
