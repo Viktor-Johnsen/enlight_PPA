@@ -5,31 +5,27 @@ This function creates an instance of the EnlightRunner, prepares input data,
 and runs a single simulation.
 """
 #%%
+from pathlib import Path
+import time
 import matplotlib.pyplot as plt
 import pandas as pd
 import numpy as np
-import time
 
-from enlight.runner import EnlightRunner  # Updated import path
-from enlight.model.energy_model import ADJUST_FLEX, ADJUST_TRANS
-from pathlib import Path
-from nbs_runner import NBSRunner
-from ppa2da import PaP2DA, BL2DA
-from ppa_input import load_plot_configs, prettify_subplots, unify_palette_cyclers
-from plotmarketclearingoutcome import plot_market_clearing_outcome
+# Module imports
+from enlight_PPA.data_ops import PaP2DA, BL2DA
+from enlight_PPA.models.energy_model import ADJUST_FLEX, ADJUST_TRANS  # relevant for EnlightModel
+from enlight_PPA.utils.nbs_utils import plot_market_clearing_outcome, load_plot_configs, prettify_subplots, unify_palette_cyclers
+from enlight_PPA.runners import EnlightRunner, NBSRunner
+
 
 if __name__ == "__main__":
     t0 = time.time()
     load_plot_configs()
-    ### For aligning all sims with the current setup config ###
-    # runner = EnlightRunner()
-    # runner.prepare_load_run_all_sims()
-    ############################################################
     scenario_name = "scenario_1"
 
     # FIRST: 1) simulate a PPA negotiation between a Producer and a Buyer
     # Setup hyperparameters
-    PPA_profile = "PaP"
+    PPA_profile = "BL"
     PPA_zone = "DELU"
 
     # Instantiate objects and load power price results from DA market model
@@ -117,9 +113,7 @@ if __name__ == "__main__":
         print(f"{d_p.results_econ['social welfare']/1e9:.6f} b.€")
         print(f"{d_p.results_econ['social welfare perceived']/1e9:.6f} b.€")
         print(f"{d_p.model.objective.value/1e9:.6f} b.€")
-    
 
-    #%%
     if PPA_profile == "BL":
         ##### RUNNING MULTIPLE DAs with different compliance rates for PPA BL #####
         bl2da_dict = {}
@@ -248,50 +242,6 @@ if __name__ == "__main__":
         for cr in crs_opt:
             offers_cr[cr], bids_cr[cr] = plot_market_clearing_outcome(dp=d_p_dict[cr], Z=PPA_zone, t=hours, bl2da=bl2da_dict[cr])
 
-    # vre_free_fore = {"solar_pv" : d_p_dict[0.00].data.solar_pv_production, "wind_on": d_p_dict[0.00].data.wind_onshore_production, "wind_off": d_p_dict[0.00].data.wind_offshore_production}
-    # vre_ppa_fore = {"solar_pv": d_p_dict[0.00].solar_pv_PPA_fore, "wind_on": d_p_dict[0.00].wind_onshore_PPA_fore, "wind_off": d_p_dict[0.00].wind_offshore_PPA_fore}
-    # vre_avail = {k: vre_free_fore[k] + vre_ppa_fore[k] for k in vre_free_fore.keys()}
-    # # vre_free_prod = {"solar_pv" : d_p_dict[0.00].solar_pv_offer.sol, "wind_on": d_p_dict[0.00].wind_onshore_offer.sol, "wind_off": d_p_dict[0.00].wind_offshore_offer.sol}
-    # # vre_bl_prod = {"solar_pv" : d_p_dict[0.00].solar_pv_BL_offer.sol, "wind_on": d_p_dict[0.00].wind_onshore_BL_offer.sol, "wind_off": d_p_dict[0.00].wind_offshore_BL_offer.sol}
-    # # vre_prod = {k: vre_free_fore[k] + vre_ppa_fore[k] for k in vre_free_fore.keys()}
-    # for k in vre_avail.keys():
-    #     # e.g. k = "solar_pv"
-    #     df = vre_avail[k]/vre_avail[k].max()
-    #     ref = PPA_zone
-    #     others = [c for c in df.columns if c != ref]
-
-    #     fig, ax = plt.subplots(figsize=(7,7))
-
-    #     for col in others:
-    #         ax.scatter(
-    #             df[ref],
-    #             df[col],
-    #             s=9,
-    #             alpha=0.2,
-    #             label=col
-    #         )
-
-    #     # 45-degree reference line
-    #     lims = [
-    #         min(df[ref].min(), df[others].min().min()),
-    #         max(df[ref].max(), df[others].max().max())
-    #     ]
-    #     ax.plot(lims, lims, "k--", lw=1, label="y = x")
-
-    #     ax.set_xlabel("DK2")
-    #     ax.set_ylabel("Other zones")
-    #     ax.set_title(f"{PPA_zone}-ref. VRE corr. scatter: {k}")
-    #     prettify_subplots(ax)
-    #     ax.set_aspect("equal", adjustable="box")
-
-    #     plt.show()
-
-    #     #vre_curt = vre_avail - vre_prod
-    #     #vre_curt_norm = vre_curt/vre_avail.max()
-    #     #vre_curt_norm
-    ###########################################################################
-
-    #%%
     if PPA_profile == "PaP":
         # SECOND: 2) Run DA market model without the PaP
         da_runner = EnlightRunner()
@@ -582,12 +532,9 @@ if __name__ == "__main__":
                 # -1.62993725, -1.62993725: PPA VRE.
                 # 0.03      ,  0.04: free solar_pv and hydro ror.
                 # 18.19142156, 18.57559151: DK2/1 Electric Boilers.
-                '''
-                mask_u_0 = (d_p.results_dict['electricity_prices'][PPA_zone] < 0)
-                mask_u_neg2 = (d_p.results_dict['electricity_prices'][PPA_zone] < -2)
-                mask_l_neg19 = (d_p.results_dict['electricity_prices'][PPA_zone] > -19)
-                d_p.results_dict['electricity_prices'][PPA_zone][mask_u_0 * mask_u_neg2 * mask_l_neg19]
-                '''
-
-
-# %%
+                
+                # Looking at negative prices:
+                # mask_u_0 = (d_p.results_dict['electricity_prices'][PPA_zone] < 0)
+                # mask_u_neg2 = (d_p.results_dict['electricity_prices'][PPA_zone] < -2)
+                # mask_l_neg19 = (d_p.results_dict['electricity_prices'][PPA_zone] > -19)
+                # d_p.results_dict['electricity_prices'][PPA_zone][mask_u_0 * mask_u_neg2 * mask_l_neg19]
