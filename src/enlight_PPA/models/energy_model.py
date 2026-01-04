@@ -12,7 +12,9 @@ import enlight_PPA.utils as utils
 PPA_profile_type: TypeAlias = PaP2DA | BL2DA
 
 ADJUST_FLEX = 1
+ADJUST_STOR = 1
 ADJUST_TRANS = 1
+BL_OFFER_PRICE = 0.03
 
 class EnlightModel:
     """
@@ -58,6 +60,7 @@ class EnlightModel:
             self.PaP = False  # Use as a bool to easily include PPAs or not
             self.BL = True
             self.PPA2DA = PPA2DA
+            self.BL_offer_price = BL_OFFER_PRICE
 
         self.model = linopy.Model()
 
@@ -251,7 +254,7 @@ class EnlightModel:
         # upper bound = pumped hydro capacity repeated for all time steps
         self.hydro_ps_units_bid = self.model.add_variables(
             lower=0,
-            upper=self.data.hydro_ps_units_el_cap,  # np.array
+            upper= ADJUST_STOR * self.data.hydro_ps_units_el_cap,  # np.array
             coords=[self.times, self.data.bidding_zones],
             dims=["T", "Z"],
             name='hydro_ps_units_bid'
@@ -279,7 +282,7 @@ class EnlightModel:
         # upper bound = BESS power capacity repeated for all time steps
         self.bess_units_bid = self.model.add_variables(
             lower=0,
-            upper=ADJUST_FLEX * self.bess_units_el_cap,  # np.array
+            upper=ADJUST_STOR * self.bess_units_el_cap,  # np.array
             coords=[self.times, self.data.bidding_zones],
             dims=["T", "Z"],
             name='bess_units_bid'
@@ -382,7 +385,7 @@ class EnlightModel:
             # Add the new BATTERY and v_min variable
             self.bess_units_BL_ch = self.model.add_variables(
                 lower=0,
-                upper=ADJUST_FLEX * self.BESS_PPA_upper_P,  # np.array
+                upper=ADJUST_STOR * self.BESS_PPA_upper_P,  # np.array
                 coords=[self.times, self.bidding_zones],
                 dims=["T", "Z"],
                 name='bess_units_BL_ch'
@@ -564,21 +567,21 @@ class EnlightModel:
                 - self.demand_inflexible_classic_bid * self.data.voll_classic
                 - self.demand_flexible_classic_bid * self.data.wtp_classic
                 # Generators:
-                + self.wind_onshore_offer * (0.03 if self.BL else self.data.wind_onshore_bid_price)
-                + self.wind_offshore_offer * (0.03 if self.BL else self.data.wind_offshore_bid_price)
-                + self.solar_pv_offer * (0.03 if self.BL else self.data.solar_pv_bid_price)
+                + self.wind_onshore_offer * (self.BL_offer_price if self.BL else self.data.wind_onshore_bid_price)
+                + self.wind_offshore_offer * (self.BL_offer_price if self.BL else self.data.wind_offshore_bid_price)
+                + self.solar_pv_offer * (self.BL_offer_price if self.BL else self.data.solar_pv_bid_price)
                 + self.hydro_ror_offer * self.data.hydro_ror_bid_price
                 # PaP:
                 + (self.wind_onshore_PaP_offer * (-self.PPA2DA.s) if self.PaP else 0)
                 + (self.wind_offshore_PaP_offer * (-self.PPA2DA.s) if self.PaP else 0)
                 + (self.solar_pv_PaP_offer * (-self.PPA2DA.s) if self.PaP else 0)
-                # BL: using 0.05 as price so I can see when the BL offer is marginal.
-                + (self.total_BL_offer * 0.03 if self.BL else 0)
+                # BL: using 0.03 as price so I can see when the BL offer is marginal.
+                + (self.total_BL_offer * self.BL_offer_price if self.BL else 0)
                 
                 # trying smth to eliminate "fake" cyclic charging
                 + ((self.bess_units_BL_dch + self.bess_units_BL_ch) * 1e-6 if self.BL else 0)
-                # trying smth to fakely incentivize increasing v_min
-                # - (self.v_min_BL * 132 if self.BL else 0)
+                # testing to see how far up the PPA compl rate can actually go!
+                # - (self.v_min_BL * 1e4 if self.BL else 0)
                ).sum()
            
             # Important: variables with different dimensions must be in different parenthesis to be summed correctly

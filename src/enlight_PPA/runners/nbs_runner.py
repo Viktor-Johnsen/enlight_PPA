@@ -42,7 +42,7 @@ class NBSRunner:
                  x_wind_on :float = 0.3,
                  x_wind_off : float = 0.3,
                  x_buyer : float = 0.4,
-                 y_batt : float = 0.25,
+                 y_batt : float = 0,
                  S_UB : float = 250,
                  ) -> None:
         """Initialize the NBSRunner."""
@@ -65,7 +65,7 @@ class NBSRunner:
         self.y_batt = y_batt
         self.S_UB = S_UB
 
-        load_plot_configs()  # conform plotting palette and more
+        self.palette = load_plot_configs()  # conform plotting palette and more
         
         # Load scenario list
         self._load_config()
@@ -119,8 +119,8 @@ class NBSRunner:
             M_UB=self.ppa_data.P_vre,  # this is overwritten later if using x_tot_Z since then P_vre=1 MW in all cases...
             gamma_LB=0,
             gamma_UB=1,
-            beta_D=0.5,
-            beta_O=0.1,
+            beta_P=0.5,
+            beta_B=0.1,
             alpha=0.75,
             nbs_setup_logger=self.nbs_runner_logger,
         )
@@ -171,10 +171,10 @@ class NBSRunner:
             [lambda_DA_dict[w] for w in self.scenario_list]
         )
 
-    def mult_nbs(self, beta_O_list, beta_D_list) -> None:
+    def mult_nbs(self, beta_B_list, beta_P_list) -> None:
         self.mult_nbs_has_run = True
-        self.beta_O_list = beta_O_list
-        self.beta_D_list = beta_D_list
+        self.beta_B_list = beta_B_list
+        self.beta_P_list = beta_P_list
         # Arbitrary scenario used to retrieve data that is
         # NOT scenario-specific from DataLoader of PPAInputCalcs objects:
         w0 = self.scenario_list[0]
@@ -203,7 +203,7 @@ class NBSRunner:
             alpha=self.nbs_setup.alpha,  # CVaR: Tail of interest for CVaR
             nbs_mult_logger=self.nbs_runner_logger,
         )
-        self.mult_nbs_models.run_multiple_NBS_models(beta_O_list=beta_O_list, beta_D_list=beta_D_list)
+        self.mult_nbs_models.run_multiple_NBS_models(beta_B_list=beta_B_list, beta_P_list=beta_P_list)
         self.nbs_runner_logger.info("RAN multiple NBS in NBSRunner")        
         self.mult_nbs_models.visualize_risk_impact_heatmap()
    
@@ -221,17 +221,17 @@ class NBSRunner:
                     res["res_gamma"] = self.mult_nbs_models.results_volume
 
                 # Save the results of each individual NBS model to allow for later inspection
-                for beta_O in self.beta_O_list:
-                    res[beta_O] = {}
-                    for beta_D in self.beta_D_list:
-                        d = self.mult_nbs_models.models[beta_O][beta_D]
+                for beta_B in self.beta_B_list:
+                    res[beta_B] = {}
+                    for beta_P in self.beta_P_list:
+                        d = self.mult_nbs_models.models[beta_B][beta_P]
                         # Do not load the "results" of any model that did not successfully run.
                         if d.model.Status == GRB.OPTIMAL:
-                            res[beta_O][beta_D] = d.get_results()
+                            res[beta_B][beta_P] = d.get_results()
 
                 output_dir = SIMULATIONS_DIR / "NBS_results"
                 output_dir.mkdir(parents=True, exist_ok=True)
 
-                file_path = output_dir / f"mult_nbs_results__{self.PPA_profile}_{self.BL_compliance_rate}_{self.beta_O_list}.pkl"
+                file_path = output_dir / f"mult_nbs_results__{self.PPA_profile}_{self.BL_compliance_rate}_{self.beta_B_list}.pkl"
                 with open(file_path, "wb") as f:
                     pickle.dump(res, f)

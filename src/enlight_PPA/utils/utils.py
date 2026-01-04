@@ -145,7 +145,7 @@ def save_data(
 
     return file_path
 
-def check_vars_list(vre_list: list, dem_list: list, gen_units_list: list, stor_units_list: list, dem_units_list: list, model_vars: linopy.variables.Variables, vre_ppa_list : list = None):
+def check_vars_list(vre_list: list, dem_list: list, gen_units_list: list, stor_units_list: list, dem_units_list: list, model_vars: linopy.variables.Variables, vre_ppa_list : list = None, vre_BL_list : list = None):
     # Verifies that all variables are indeed accounted for when post-calculating social welfare.
     #   Only 'export' and 'SOC'-variables may be overlooked.
     stor_expanded = []
@@ -154,10 +154,17 @@ def check_vars_list(vre_list: list, dem_list: list, gen_units_list: list, stor_u
     vars_accounted_for = vre_list + dem_list + gen_units_list + stor_expanded + dem_units_list + ['lineflow']
     if vre_ppa_list is not None:
         vars_accounted_for += vre_ppa_list
+    if vre_BL_list is not None:
+        vars_accounted_for += vre_BL_list
     vars_accounted_for = list(map(lambda x: x.replace("_sol",""), vars_accounted_for))
     vars_unaccounted_for = set(model_vars) - set(vars_accounted_for)
     for v in vars_unaccounted_for:
-        if not (v.endswith('_SOC') or v == 'export'):
+        if not (v.endswith('_SOC')
+                or v == 'export'
+                # For BL only: ignore all other than total_BL_offer
+                or v in ['v_min_BL', 'wind_onshore_BL_offer', 'wind_offshore_BL_offer', 'solar_pv_BL_offer']
+                or v.startswith('bess_units_BL_')
+                ):
             raise Exception(f"Variable {v} is not accounted for in the calculation of social welfare.\nAll variables unaccounted for are: {vars_unaccounted_for} of which SOC's and export shouldn't be accounted for.")
 
 def save_model_results(self):#, week: int):
@@ -207,6 +214,11 @@ def save_model_results(self):#, week: int):
                 "wind_onshore_PaP_offer_sol": get_solution(self.wind_onshore_PaP_offer),
                 "wind_offshore_PaP_offer_sol": get_solution(self.wind_offshore_PaP_offer),
                 "solar_pv_PaP_offer_sol": get_solution(self.solar_pv_PaP_offer),
+            })
+        if self.BL:
+            self.results_dict.update({
+                # Offers under a PaP
+                "total_BL_offer_sol": get_solution(self.total_BL_offer),
             })
 
         # Derived results
@@ -328,6 +340,11 @@ def save_model_results(self):#, week: int):
             VRE_PPA_costs = dict(zip(vre_ppa_list, [-self.PPA2DA.s, -self.PPA2DA.s, -self.PPA2DA.s]))
         else:
             vre_ppa_list = None
+        if self.BL:
+            vre_BL_list = ['total_BL_offer_sol']
+            VRE_BL_costs = dict(zip(vre_BL_list, [self.BL_offer_price]))
+        else:
+            vre_BL_list = None
 
         # List demands and put relevant data in a dict.
         dem_list = ['demand_inflexible_classic_bid_sol', 'demand_flexible_classic_bid_sol']
@@ -349,21 +366,31 @@ def save_model_results(self):#, week: int):
         dem_units_bid_prices_dfs = dict(zip(dem_units_list, [self.data.ptx_units_bid_prices_df, self.data.dh_units_bid_prices_df]))
         print("check vars list")
         # Verify that all variables are indeed accounted for. Only 'export' and 'SOC'-variables may be overlooked.
+        # If self.BL then also v_min_BL may be overlooked.
         check_vars_list(vre_list=vre_list,
                         dem_list=dem_list,
                         gen_units_list=gen_units_list,
                         stor_units_list=stor_units_list,
                         dem_units_list=dem_units_list,
                         model_vars=self.model.variables,
-                        vre_ppa_list=vre_ppa_list)
+                        vre_ppa_list=vre_ppa_list,
+                        vre_BL_list=vre_BL_list)
 
+        # Before anything else create a "BL_transfer":
+        if self.BL:
+            BL_net_settlement = (self.PPA2DA.m * (self.PPA2DA.s - self.results_dict['electricity_prices'][self.PPA2DA.z])).sum(axis=0)
+            self.BL_net_settlement = BL_net_settlement
         # Get VRE revenues and operatings costs
         for vre in vre_list:
             vre_ = vre.replace("_offer_sol", "")  # prettifying keys
             self.results_econ["revenues"][vre_] = (self.results_dict[vre].mul(self.results_dict['electricity_prices'], axis='columns')).sum(axis=0)  # sum across hours
-            self.results_econ["costs"][vre_] = (self.results_dict[vre] * VRE_costs[vre]).sum(axis=0)
+            if not self.BL or vre == 'hydro_ror_offer_sol':
+                # NB! no hydro_ror is included in the BL!
+                self.results_econ["costs"][vre_] = (self.results_dict[vre] * VRE_costs[vre]).sum(axis=0)
+            else:
+                self.results_econ["costs"][vre_] = (self.results_dict[vre] * VRE_BL_costs['total_BL_offer_sol']).sum(axis=0)
         print("calculate the revs and costs (true and perceived) of vres under paps")
-        # Insert PPA calcs here
+        # Insert PPA econ calcs here
         if self.PaP:
             for vre_ppa in vre_ppa_list:
                 vre_ppa_ = vre_ppa.replace("_offer_sol", "")  # prettifying keys
@@ -385,6 +412,41 @@ def save_model_results(self):#, week: int):
                 self.results_econ["costs"][vre_ppa_] = self.results_dict[vre_ppa].sum(axis=0) * VRE_costs[vre_ppa.replace("_PaP", "")]
         else:
             vre_ppa_list = []
+
+        if self.BL:
+            for vre_bl in vre_BL_list:
+                vre_bl_ = vre_bl.replace("_offer_sol", "")  # prettifying key(s)
+                print("in res_dict")
+                revs_perceived = (self.results_dict[vre_bl].mul(self.results_dict['electricity_prices'], axis='columns')).sum(axis=0)  # sum across hours
+                print("in vre_ppa_costs")
+                costs_perceived = (self.results_dict[vre_bl] * VRE_BL_costs[vre_bl]).sum(axis=0)
+
+                # All calculations based on vre_list have already been performed and it can
+                # be safely changed to included vre_ppa_list. This avoids having to use if-statements
+                # in the profit calculations below.
+                print("in econ: profs_sw")
+                self.results_econ['profits_sw'][vre_bl] = revs_perceived - costs_perceived
+
+                # Revs are pure PaP
+                print("in econ: revs / res_dict")
+                self.results_econ["revenues"][vre_bl_] = (
+                     # PPA settlement
+                     # BL_net_settlement
+                     # DA revenues
+                     revs_perceived
+                     )
+                # Overwrite in the PPA zone to include the net BL settlement.
+                self.results_econ["revenues"][vre_bl_].loc[self.PPA2DA.z] = (
+                     # PPA settlement
+                     BL_net_settlement
+                     # DA revenues
+                     + revs_perceived.loc[self.PPA2DA.z]
+                     )
+                print("in econ: costs / res dict / vre_costs")
+                self.results_econ["costs"][vre_bl_] = self.results_dict[vre_bl].sum(axis=0) * VRE_BL_costs[vre_bl]
+        else:
+            vre_BL_list = []
+
         print("dem utils")
         # Get demands utilities and power costs
         for dem in dem_list:
@@ -399,19 +461,28 @@ def save_model_results(self):#, week: int):
             self.results_econ['profits_sw']['demand_inflexible_classic'] = (self.results_econ["revenues"]['demand_inflexible_classic']
                                                - self.results_econ["costs"]['demand_inflexible_classic'])
             # Overwrite the revenues and costs... quick fix
-            self.results_econ["revenues"]['demand_inflexible_classic'] = 0
+            # self.results_econ["revenues"]['demand_inflexible_classic'] = 0
             self.results_econ["costs"]['demand_inflexible_classic'] = (
-                (self.wind_onshore_PPA_fore
-                 + self.wind_offshore_PPA_fore
-                 + self.solar_pv_PPA_fore
-                 ) * self.results_dict['electricity_prices']
+                (self.results_dict['demand_inflexible_classic_bid_sol']
+                 # Using sol instead of fore because of lots of curtailment...
                  - (self.results_dict['wind_onshore_PaP_offer_sol']
                  + self.results_dict['wind_offshore_PaP_offer_sol']
                  + self.results_dict['solar_pv_PaP_offer_sol']
+                 )
+                 ) * self.results_dict['electricity_prices']
+                 + (self.results_dict['wind_onshore_PaP_offer_sol']
+                 + self.results_dict['wind_offshore_PaP_offer_sol']
+                 + self.results_dict['solar_pv_PaP_offer_sol']
                  ) * self.PPA2DA.s
-                 - self.results_dict['demand_inflexible_classic_bid_sol']
-                 * self.results_dict['electricity_prices']
             ).sum(axis=0)
+
+        if self.BL:
+            self.results_econ['profits_sw']['demand_inflexible_classic'] = (self.results_econ["revenues"]['demand_inflexible_classic']
+                                               - self.results_econ["costs"]['demand_inflexible_classic'])
+            # Overwrite the revenues and costs... quick fix
+            # self.results_econ["revenues"]['demand_inflexible_classic'] = 0
+            # Add the BL_net_settlement in the costs in the zone where the PPA is signed.
+            self.results_econ["costs"]['demand_inflexible_classic'].loc[self.PPA2DA.z] += BL_net_settlement
 
         # Get conventional and hydro res units revenues and operating costs
         for gen in gen_units_list:
@@ -446,9 +517,22 @@ def save_model_results(self):#, week: int):
 
         # Transmission System Operater: congestion rent
         # Align index (they are slightly different)
-        self.data.L_Z_df.index = self.results_dict['lineflow_sol'].columns
-        self.results_econ['profits']['lineflow'] = (-self.results_dict['lineflow_sol'].dot(self.data.L_Z_df) * self.results_dict['electricity_prices']).sum(axis=0)
-        self.results_econ['profits_tot']['lineflow'] = float(np.round(self.results_econ['profits']['lineflow'].sum()/1e9,4))
+        CR = {}
+        for line in self.lineflow.coords["L"].values:
+            z_from, z_to = tuple(line.split("-"))
+            CR[line] = (
+                self.results_dict['lineflow_sol'][line]
+                * (self.results_dict['electricity_prices'][z_to]
+                   - self.results_dict['electricity_prices'][z_from]
+                   )).sum(axis=0)
+        # Turn into dataframe
+        sr_cr = pd.Series(CR, name="congestion_rent")
+        sr_cr.index.name = "line"
+        self.results_econ['profits']['lineflow (CR)'] = sr_cr
+        # Previous, wrong CR calculation...:
+        # self.data.L_Z_df.index = self.results_dict['lineflow_sol'].columns
+        # self.results_econ['profits']['lineflow (CR)'] = (-self.results_dict['lineflow_sol'].dot(self.data.L_Z_df) * self.results_dict['electricity_prices']).sum(axis=0)
+        self.results_econ['profits_tot']['lineflow (CR)'] = float(np.round(self.results_econ['profits']['lineflow (CR)'].sum()/1e9,4))
 
         # Calculate profits for other participants
         for k in self.results_econ['revenues'].keys():
@@ -458,7 +542,7 @@ def save_model_results(self):#, week: int):
 
         # Compare social welfare from this function and from the model.
         self.results_econ["consumer surplus"] = sum(map(lambda x: self.results_econ['profits'][x.replace("_bid_sol","")].sum(), dem_list+dem_units_list))
-        if self.PaP:
+        if self.PaP or self.BL:
             self.results_econ["consumer surplus perceived"] = (
                 sum(
                     self.results_econ['profits_sw'][x.replace("_bid_sol", "")].sum()
@@ -470,13 +554,13 @@ def save_model_results(self):#, week: int):
                 )
             )
         print("ps")
-        self.results_econ["producer surplus"] = sum(map(lambda x: self.results_econ['profits'][x.replace("_offer_sol","")].sum(), vre_list+gen_units_list+stor_units_list+['lineflow']+vre_ppa_list))
+        self.results_econ["producer surplus"] = sum(map(lambda x: self.results_econ['profits'][x.replace("_offer_sol","")].sum(), vre_list+gen_units_list+stor_units_list+['lineflow (CR)']+vre_ppa_list+vre_BL_list))
         print("ps perceived")
-        self.results_econ["producer surplus perceived"] = sum(map(lambda x: self.results_econ['profits'][x.replace("_offer_sol","")].sum(), vre_list+gen_units_list+['lineflow'])) + sum(map(lambda x: self.results_econ['profits_sw'][x].sum() if not (type(x)==float or type(x)==int) else 0, stor_units_list+vre_ppa_list))
+        self.results_econ["producer surplus perceived"] = sum(map(lambda x: self.results_econ['profits'][x.replace("_offer_sol","")].sum(), vre_list+gen_units_list+['lineflow (CR)'])) + sum(map(lambda x: self.results_econ['profits_sw'][x].sum() if not (type(x)==float or type(x)==int) else 0, stor_units_list+vre_ppa_list+vre_BL_list))
         print("sw")
         self.results_econ["social welfare"] =  self.results_econ["producer surplus"] + self.results_econ["consumer surplus"]
         print("sw perceived")
-        if self.PaP:
+        if self.PaP or self.BL:
             self.results_econ["social welfare perceived"] =  self.results_econ["producer surplus perceived"] + self.results_econ["consumer surplus perceived"]
         else:
             # Without PaP there is no "consumer surplus perceived"

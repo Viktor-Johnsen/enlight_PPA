@@ -13,38 +13,41 @@ import numpy as np
 
 # Module imports
 from enlight_PPA.data_ops import PaP2DA, BL2DA
-from enlight_PPA.models.energy_model import ADJUST_FLEX, ADJUST_TRANS  # relevant for EnlightModel
-from enlight_PPA.utils.nbs_utils import plot_market_clearing_outcome, load_plot_configs, prettify_subplots, unify_palette_cyclers
+from enlight_PPA.models.energy_model import ADJUST_FLEX, ADJUST_TRANS, ADJUST_STOR  # relevant for EnlightModel
+from enlight_PPA.utils.nbs_utils import plot_market_clearing_outcome, load_plot_configs, prettify_subplots, unify_palette_cyclers, make_hour_formatter
 from enlight_PPA.runners import EnlightRunner, NBSRunner
 
+FAKE_PURE_ONWIND = True  # only for testing purposes!
 
 if __name__ == "__main__":
     t0 = time.time()
     load_plot_configs()
-    scenario_name = "scenario_1"
+    scenario_name = "scenario_4"
 
     # FIRST: 1) simulate a PPA negotiation between a Producer and a Buyer
     # Setup hyperparameters
     PPA_profile = "BL"
     PPA_zone = "DELU"
+    BL_compliance_rate = 0.0
 
     # Instantiate objects and load power price results from DA market model
     nbs_runner = NBSRunner(
                     PPA_profile=PPA_profile,
-                    BL_compliance_rate=0.0,
+                    BL_compliance_rate=BL_compliance_rate,
                     PPA_zone=PPA_zone,
                     # For a specific Producer/Buyer: P_vre, x_pv, x_wind_on, x_wind_off, y_batt, x_buyer
                     # On a zonal level: x_tot_Z...
                     x_tot_Z=0.9999,  # use 99.99% of the total zonal VRE (Hydro ror excl.) capacity
-                    S_UB=40,
+                    y_batt=0,  # If 0: use the zonal-level P_BESS/P_VRE ratio
+                    S_UB=45,
     )
 
     # For good measure, check that the scenarios align. If not, uncomment and run the first two lines.
     for da_obj in nbs_runner.da_data_dict.values():
         print(da_obj.bidding_zones)
 
-    beta_O_list = [0.1]
-    beta_D_list = [0.5]
+    beta_O_list = [0.4]
+    beta_D_list = [0.4]
     beta_O_chosen = beta_O_list[0]
     beta_D_chosen = beta_D_list[0]
     nbs_runner.mult_nbs(beta_O_list, beta_D_list)
@@ -76,14 +79,14 @@ if __name__ == "__main__":
     if PPA_profile == "BL":
         bl2da = BL2DA(
             z=PPA_zone,
-            compl_rate=0.6,
+            compl_rate=BL_compliance_rate,
             s=nbs_runner.mult_nbs_models.models[beta_O_chosen][beta_D_chosen].S.X,
-            m=nbs_runner.mult_nbs_models.results_volume[beta_O_chosen][beta_D_chosen],  # M.X is normalized!
-            solar_pv_el_cap=nbs_runner.ppa_calcs_dict["scenario_1"].solar_pv_el_cap,
+            m=(1 if not FAKE_PURE_ONWIND else nbs_runner.ppa_data.x_wind_on * 1.2) * nbs_runner.mult_nbs_models.results_volume[beta_O_chosen][beta_D_chosen],  # M.X is normalized!
+            solar_pv_el_cap=(nbs_runner.ppa_calcs_dict["scenario_1"].solar_pv_el_cap if not FAKE_PURE_ONWIND else 10),  # MW...
             on_wind_el_cap=nbs_runner.ppa_calcs_dict["scenario_1"].on_wind_el_cap,
-            off_wind_el_cap=nbs_runner.ppa_calcs_dict["scenario_1"].off_wind_el_cap,
-            P_batt=nbs_runner.ppa_calcs_dict["scenario_1"].P_batt,
-            E_batt=nbs_runner.ppa_calcs_dict["scenario_1"].E_batt,
+            off_wind_el_cap=(nbs_runner.ppa_calcs_dict["scenario_1"].off_wind_el_cap if not FAKE_PURE_ONWIND else 10), # MW...
+            P_batt=(1 if not FAKE_PURE_ONWIND else 0.67) * nbs_runner.ppa_calcs_dict["scenario_1"].P_batt,
+            E_batt=(1 if not FAKE_PURE_ONWIND else 0.67) * nbs_runner.ppa_calcs_dict["scenario_1"].E_batt,
         )
     elif PPA_profile == "PaP":
         pap2da = PaP2DA(
@@ -99,47 +102,58 @@ if __name__ == "__main__":
     print(f"NBS took {time.time()-t0:.2f} s.")
     
     # SECOND: 1) Run DA market model with the PPA
-    if PPA_profile == "PaP":
-        da_runner_ppa = EnlightRunner()
-        da_runner_ppa.prepare_data_single_scenario(scenario_name=scenario_name)
-        da_runner_ppa.load_data_single_simulation(scenario_name=scenario_name)
-        if PPA_profile == "BL":
-            da_runner_ppa.run_single_simulation(scenario_name=scenario_name + "/PPA", PPA2DA=bl2da)
-        elif PPA_profile == "PaP":
-            da_runner_ppa.run_single_simulation(scenario_name=scenario_name + "/PPA", PPA2DA=pap2da)
-        d_p = da_runner_ppa.enlight_model
+    
+    da_runner_ppa = EnlightRunner()
+    # da_runner_ppa.prepare_data_single_scenario(scenario_name=scenario_name)
+    da_runner_ppa.load_data_single_simulation(scenario_name=scenario_name)
+    if PPA_profile == "BL":
+        da_runner_ppa.run_single_simulation(scenario_name=scenario_name + "/PPA", PPA2DA=bl2da)
+    elif PPA_profile == "PaP":
+        da_runner_ppa.run_single_simulation(scenario_name=scenario_name + "/PPA", PPA2DA=pap2da)
+    d_p = da_runner_ppa.enlight_model
 
-        # Verify social welfare calculations
-        print(f"{d_p.results_econ['social welfare']/1e9:.6f} b.€")
-        print(f"{d_p.results_econ['social welfare perceived']/1e9:.6f} b.€")
-        print(f"{d_p.model.objective.value/1e9:.6f} b.€")
+    # Verify social welfare calculations
+    print(f"{d_p.results_econ['social welfare']/1e9:.6f} b.€")
+    print(f"{d_p.results_econ['social welfare perceived']/1e9:.6f} b.€ (if it differs from below, check slacks in obj!)")
+    print(f"{d_p.model.objective.value/1e9:.6f} b.€")
+
+
+    #%%
 
     if PPA_profile == "BL":
         ##### RUNNING MULTIPLE DAs with different compliance rates for PPA BL #####
         bl2da_dict = {}
         d_p_dict = {}
         # crs = [0.50, 0.60, 0.70, 0.75]
-        crs = [0.00, 0.9]#, 0.70, 0.85]#, 0.90]
+        crs = [0.708]#[0.00, 0.81]#, 0.70, 0.85]#, 0.90]
         for cr in crs:
             print(cr)
             bl2da_dict[cr] = BL2DA(
                     z=PPA_zone,
                     compl_rate=cr,
                     s=nbs_runner.mult_nbs_models.models[beta_O_chosen][beta_D_chosen].S.X,
-                    m=nbs_runner.mult_nbs_models.results_volume[beta_O_chosen][beta_D_chosen],  # M.X is normalized!
-                    solar_pv_el_cap=nbs_runner.ppa_calcs_dict["scenario_1"].solar_pv_el_cap,
+                    m=(1 if not FAKE_PURE_ONWIND else nbs_runner.ppa_data.x_wind_on * 1.2) * nbs_runner.mult_nbs_models.results_volume[beta_O_chosen][beta_D_chosen],  # M.X is normalized!
+                    solar_pv_el_cap=(nbs_runner.ppa_calcs_dict["scenario_1"].solar_pv_el_cap if not FAKE_PURE_ONWIND else 10),  # MW...
                     on_wind_el_cap=nbs_runner.ppa_calcs_dict["scenario_1"].on_wind_el_cap,
-                    off_wind_el_cap=nbs_runner.ppa_calcs_dict["scenario_1"].off_wind_el_cap,
-                    P_batt=nbs_runner.ppa_calcs_dict["scenario_1"].P_batt,
-                    E_batt=nbs_runner.ppa_calcs_dict["scenario_1"].E_batt,
-            )
+                    off_wind_el_cap=(nbs_runner.ppa_calcs_dict["scenario_1"].off_wind_el_cap if not FAKE_PURE_ONWIND else 10), # MW...
+                    P_batt=(1 if not FAKE_PURE_ONWIND else 0.67) * nbs_runner.ppa_calcs_dict["scenario_1"].P_batt,
+                    E_batt=(1 if not FAKE_PURE_ONWIND else 0.67) * nbs_runner.ppa_calcs_dict["scenario_1"].E_batt,
+                )
             da_runner_ppa = EnlightRunner()
             da_runner_ppa.prepare_load_run_single_sim(scenario_name=scenario_name, results_path_optional=f"PPA_{PPA_profile}_{cr}", PPA2DA=bl2da_dict[cr])
             d_p_dict[cr] = da_runner_ppa.enlight_model
         print("Finished running multiple BL PPAs: ", crs)
 
+        # also include the base case with 0% compliance rate (the original run above)
+        if len(crs) == 1:
+            crs.insert(0, BL_compliance_rate)
+            bl2da_dict[BL_compliance_rate] = bl2da
+            d_p_dict[BL_compliance_rate] = d_p
+
         # inspect cr results
-        hours = np.arange(120*24+1, 120*24+72, 1)
+        year = d_p_dict[crs[0]].data.solar_weather_year  # for axis formatter
+
+        hours = np.arange(120*24+1, 120*24+168, 1)
         # 65,   66,   94,   95,  104 in mask
         crs_opt = np.array([cr for cr in crs if d_p_dict[cr].model.status == "ok"])
         cr_ref = 0.0
@@ -157,11 +171,13 @@ if __name__ == "__main__":
             len(crs_opt),
             figsize=(12, 6),
             constrained_layout=True,
+            sharex=True,
         )
         fig2, ax2 = plt.subplots(
             len(crs_opt),
             figsize=(12, 6),
             constrained_layout=True,
+            sharex=True,
         )
         ax1 = ax1.flatten()
         ax2 = ax2.flatten()
@@ -169,8 +185,10 @@ if __name__ == "__main__":
         unify_palette_cyclers(ax1)
         # unify_palette_cyclers(ax2)
 
+        observed_PPA_complr = {}
         for i, cr in enumerate(crs_opt):
             # fig1:
+            observed_PPA_complr[cr] = np.minimum(d_p_dict[cr].total_BL_offer.sol, d_p_dict[cr].PPA2DA.m).sum().item()/(d_p_dict[cr].PPA2DA.m * d_p_dict[cr].T)
             vres_BL_fore = (d_p_dict[cr].solar_pv_PPA_fore[PPA_zone] + d_p_dict[cr].wind_onshore_PPA_fore[PPA_zone] + d_p_dict[cr].wind_offshore_PPA_fore[PPA_zone]).loc[hours]
             vres_BL = (d_p_dict[cr].solar_pv_BL_offer.sol + d_p_dict[cr].wind_onshore_BL_offer.sol + d_p_dict[cr].wind_offshore_BL_offer.sol).sel(Z=PPA_zone).loc[hours].to_pandas()
             inflex = d_p_dict[cr].data.demand_inflexible_classic.loc[hours][PPA_zone]
@@ -197,8 +215,8 @@ if __name__ == "__main__":
             
             Import.plot(ax=ax2[i], label=f"Import {cr}")
             Export.plot(ax=ax2[i], label=f"Export {cr}")
-            d_p_dict[cr].results_dict['electricity_prices'][PPA_zone].loc[hours].plot(ax=ax2_2[i], ls="--", label=f"DA prices -- {PPA_zone}")
-            d_p_dict[cr].results_dict['electricity_prices']["DK1"].loc[hours].plot(ax=ax2_2[i], ls="--", label="DA prices -- DK1")
+            d_p_dict[cr].results_dict['electricity_prices'][PPA_zone].loc[hours].plot(ax=ax2_2[i], ls="--", label=f"{PPA_zone} spot price")
+            # d_p_dict[cr].results_dict['electricity_prices']["DK1"].loc[hours].plot(ax=ax2_2[i], ls="--", label="DA prices -- DK1")
             # Add legend
             h1, l1 = ax2[i].get_legend_handles_labels()
             h2, l2 = ax2_2[i].get_legend_handles_labels()
@@ -213,7 +231,19 @@ if __name__ == "__main__":
         
 
         prettify_subplots(ax1)  # [0, 2]
+        ax1[0].set_title(f"{PPA_zone}: PPA VRE production and BESS operation under different ENFORCED compliance rates.\nCompl. rates are {crs_opt[0]:.3f}|{observed_PPA_complr[crs_opt[0]]:.3f} (enforced|observed)\nPower [MW]", loc='left')
+        ax1[1].set_title(f"Compl. rates are {crs_opt[-1]:.3f}|{observed_PPA_complr[crs_opt[-1]]:.3f} (enforced|observed)\nPower [MW]", loc='left')
+        ax1[1].xaxis.set_major_formatter(make_hour_formatter(year=year))
+        ax1[1].tick_params(axis='x', rotation=15)
+        ax1[1].set_xlabel("")  # remove automatic "Time"
         prettify_subplots(ax2, legend=False)  # [0, 2]
+        ax2[0].set_title(f"{PPA_zone}: Import/Export under different ENFORCED compliance rates.\nCompl. rates are {crs_opt[0]:.3f}|{observed_PPA_complr[crs_opt[0]]:.3f} (enforced|observed)\nPower [MW]", loc='left')
+        ax2[1].set_title(f"Compl. rates are {crs_opt[-1]:.3f}|{observed_PPA_complr[crs_opt[-1]]:.3f} (enforced|observed)\nPower [MW]", loc='left')
+        ax2_2[0].set_title("Spot price [€/MWh] ", loc='right')
+        ax2_2[1].set_title("Spot price [€/MWh] ", loc='right')
+        ax2[1].xaxis.set_major_formatter(make_hour_formatter(year=year))
+        ax2[1].tick_params(axis='x', rotation=15)
+        ax2[1].set_xlabel("")  # remove automatic "Time"
         prettify_subplots(ax2_2, legend=False, grid=False)
         plt.show()
 
@@ -227,20 +257,190 @@ if __name__ == "__main__":
         
         fig, ax = plt.subplots(figsize=(12,6))
         param = 'electricity_prices' #'electricity_export_sol'
-        for cr in crs_opt:
+        pdc_labels=[f"DA ({cr_ref})", f"w/ BL ({crs_opt[-1]:.3f})"]
+        for i, cr in enumerate(crs_opt):
             y = d_p_dict[cr].results_dict[param][PPA_zone].sort_values()[::-1].values
-            ax.plot(y, ls="-", label=f"{PPA_zone} {param} -- {cr}")
-            for z in d_p_dict[0.00].bidding_zones:
-                cp_inflex = (d_p_dict[cr].results_dict['electricity_prices'][z] * d_p_dict[cr].data.demand_inflexible_classic[z]).sum(axis=0) / d_p_dict[cr].data.demand_inflexible_classic[z].sum(axis=0)
-                print(f"Inflex load capture price ({z}, {cr}): {cp_inflex:.2f} €/MWh")
+            ax.plot(y, ls="-", label=pdc_labels[i])
         prettify_subplots(ax)
+        ax.set_xlabel("Hour of year [h]")
+        ax.set_title(f"{PPA_zone}: Price-duration curves before and after {PPA_profile}.\nSpot price [€/MWh]", loc='left')
         plt.show()
+
+        for z in d_p_dict[0.00].bidding_zones:
+            cp_inflex = {}
+            for cr in crs_opt:
+                cp_inflex[cr] = (d_p_dict[cr].results_dict['electricity_prices'][z] * d_p_dict[cr].data.demand_inflexible_classic[z]).sum(axis=0) / d_p_dict[cr].data.demand_inflexible_classic[z].sum(axis=0)
+            print(f"Inflex load CP in {z}:({crs_opt[0]}) {cp_inflex[crs_opt[0]]:.2f} -- ({crs_opt[-1]}) {cp_inflex[crs_opt[-1]]:.2f} €/MWh")
+
 
         offers_cr = {}
         bids_cr = {}
         ##### PRODUCED STACKED LINE CHARTS
         for cr in crs_opt:
             offers_cr[cr], bids_cr[cr] = plot_market_clearing_outcome(dp=d_p_dict[cr], Z=PPA_zone, t=hours, bl2da=bl2da_dict[cr])
+
+        fores = ["solar_pv_PPA_fore", "wind_onshore_PPA_fore", "wind_offshore_PPA_fore", "solar_pv_production", "wind_onshore_production", "wind_offshore_production"]
+        vars = ["solar_pv_BL_offer", "wind_onshore_BL_offer", "wind_offshore_BL_offer", "solar_pv_offer", "wind_onshore_offer", "wind_offshore_offer"]
+
+        curt_z = {}  # only for the chosen PPA zone
+        curt_zonal = {}  # by zone
+        curt_tot = {}  # total across zones
+        for cr in crs_opt:
+            curt_z[cr] = {}
+            curt_zonal[cr] = {}
+            curt_tot[cr] = {}
+            for f, v in zip(fores, vars):
+                k = v.removesuffix("_offer")
+                curt_zonal[cr][k] = (getattr(d_p_dict[cr], f) - getattr(d_p_dict[cr], v).sol.to_pandas()).sum(axis=0)  # forecast - dispatch
+                curt_tot[cr][k] = curt_zonal[cr][k].sum()
+                curt_z[cr][k] = curt_zonal[cr][k].loc[PPA_zone]
+            print(f"VRE (excl. hydro ror) for cr={cr}: {sum(curt_tot[cr].values())/1e6:.2f} TWh")
+            print(f"In {PPA_zone}: {sum(curt_z[cr].values())/1e6:.2f} TWh")
+
+        # Base (non-PaP) keys only
+        keys = sorted(k for k in set(d_p_dict[cr_ref].results_econ['profits']) if not k.endswith('_PaP'))
+
+        units_mapping = {
+            'conventional_units': d_p_dict[cr_ref].data.G_Z_df,
+            'dh_units': d_p_dict[cr_ref].data.L_DH_Z_df,
+            'hydro_res_units': d_p_dict[cr_ref].data.G_hydro_res_Z_df,
+            'ptx_units': d_p_dict[cr_ref].data.L_PtX_Z_df
+        }
+
+        vals_d = []
+        vals_dp_base = []
+        vals_dp_pap = []
+
+        for k in keys:
+            if k in units_mapping:
+                vals_d.append(
+                    d_p_dict[cr_ref].results_econ['profits'].get(k, np.nan)
+                    .dot(units_mapping[k]).loc[PPA_zone] / 1e9
+                )
+
+                base = (
+                    d_p_dict[crs_opt[-1]].results_econ['profits']
+                    .get(k, 0.0).dot(units_mapping[k]).loc[PPA_zone]
+                )
+                pap = d_p_dict[crs_opt[-1]].results_econ['profits'].get(f"{k}_PaP", 0.0)
+                if not isinstance(pap, float):
+                    pap = pap.loc[PPA_zone]
+
+                vals_dp_base.append(base / 1e9)
+                vals_dp_pap.append(pap / 1e9)
+
+            elif k == 'demand_inflexible_classic':
+                vals_d.append(
+                    (
+                        d_p_dict[cr_ref].results_econ['profits'][k].loc[PPA_zone]
+                        - d_p_dict[cr_ref].results_dict['demand_inflexible_classic_bid_sol']
+                        .sum(axis=0).loc[PPA_zone]
+                        * d_p_dict[cr_ref].data.voll_classic
+                    ) / 1e9
+                )
+
+                base = (
+                    - d_p_dict[crs_opt[-1]].results_dict['demand_inflexible_classic_bid_sol']
+                    * d_p_dict[crs_opt[-1]].results_dict['electricity_prices']
+                ).sum(axis=0)[PPA_zone]
+
+                pap = (
+                    d_p_dict[crs_opt[-1]].PPA2DA.m
+                    * (d_p_dict[crs_opt[-1]].results_dict['electricity_prices']
+                    - d_p_dict[crs_opt[-1]].PPA2DA.s)
+                ).sum(axis=0)[PPA_zone]
+
+                vals_dp_base.append(base / 1e9)
+                vals_dp_pap.append(pap / 1e9)
+
+            elif k == 'lineflow (CR)':
+                df_CR = d_p_dict[cr_ref].results_econ['profits']['lineflow (CR)']
+                vals_d.append(
+                    sum(df_CR.loc[line] for line in df_CR.index if PPA_zone in line.split("-")) / 1e9
+                )
+
+                df_CR_p = d_p_dict[crs_opt[-1]].results_econ['profits']['lineflow (CR)']
+                base = sum(df_CR_p.loc[line] for line in df_CR_p.index if PPA_zone in line.split("-"))
+
+                vals_dp_base.append(base / 1e9)
+                vals_dp_pap.append(0.0)
+
+            elif k == "total_BL":
+                vals_d.append(
+                    d_p_dict[cr_ref].results_econ['profits_sw'][k + "_offer_sol"].loc[PPA_zone] / 1e9
+                )
+
+                base = (
+                    d_p_dict[crs_opt[-1]].results_econ['profits_sw'][k + "_offer_sol"].loc[PPA_zone]
+                )
+                pap = d_p_dict[crs_opt[-1]].BL_net_settlement
+
+                vals_dp_base.append(base / 1e9)
+                vals_dp_pap.append(pap / 1e9)
+
+            else:
+                vals_d.append(
+                    d_p_dict[cr_ref].results_econ['profits'][k].loc[PPA_zone] / 1e9
+                )
+
+                base = d_p_dict[crs_opt[-1]].results_econ['profits'].get(k, 0.0).loc[PPA_zone]
+                pap = d_p_dict[crs_opt[-1]].results_econ['profits'].get(f"{k}_PaP", 0.0)
+                if not isinstance(pap, float):
+                    pap = pap.loc[PPA_zone]
+
+                vals_dp_base.append(base / 1e9)
+                vals_dp_pap.append(pap / 1e9)
+
+        # set inflex demand to 0 to get a better look at the other bars
+        dem_infl_idx = np.arange(len(keys))[np.array(keys)=='demand_inflexible_classic'][0]
+        vals_d3 = vals_d.copy()
+        vals_dp_base3 = vals_dp_base.copy()
+        vals_dp_pap3 = vals_dp_pap.copy()
+        vals_d3[dem_infl_idx] = 0
+        vals_dp_base3[dem_infl_idx] = 0
+        vals_dp_pap3[dem_infl_idx] = 0
+
+        x = np.arange(len(keys))
+        width = 0.35
+
+        # Horizontal bar plots
+        order = np.argsort(vals_d)
+
+        keys_s      = np.array(keys)[order]
+        vals_d_s    = np.array(vals_d)[order]
+        vals_dp_b_s = np.array(vals_dp_base)[order]
+        vals_dp_p_s = np.array(vals_dp_pap)[order]
+
+        y = np.arange(len(keys_s))
+        h = 0.25
+
+        fig, ax = plt.subplots(1, 3, figsize=(14, 8), sharey=True, width_ratios=[1, 0.1, 1])
+
+        # Plot 1
+        ax[0].barh(y - h, vals_d_s, height=h, label="DA")
+        ax[0].barh(y,     vals_dp_b_s, height=h, label="DA with PPA")
+        ax[0].barh(y,     vals_dp_p_s, height=h, left=vals_dp_b_s, label="PPA part")
+
+        # Plot 2 (inflex = 0, same order)
+        ax[2].barh(y - h, np.array(vals_d3)[order], height=h)
+        ax[2].barh(y,     np.array(vals_dp_base3)[order], height=h)
+        ax[2].barh(y,     np.array(vals_dp_pap3)[order],
+                height=h, left=np.array(vals_dp_base3)[order])
+
+        # Prettifying + legend
+        ax[0].set_yticks(y, keys_s)
+        ax[0].invert_yaxis()
+        prettify_subplots(ax[0], legend=False)
+        prettify_subplots(ax[2], legend=False)
+        handles, labels = ax[0].get_legend_handles_labels()
+        ax[1].legend(handles, labels, loc="upper center", frameon=False)
+        ax[1].axis("off")
+        ax[0].set_xlabel("Utility|Profit [b.€]")
+        ax[2].set_xlabel("Utility|Profit [b.€]")
+        ax[0].set_title(fr"{PPA_zone}: Individual PS and CS by type -- {PPA_profile} ($M=${d_p.PPA2DA.m/1e3:.2f} GW)", loc="left")
+        ax[2].set_title(f"REPEATED without {keys_s[0]}", loc="left")
+
+        plt.show()
 
     if PPA_profile == "PaP":
         # SECOND: 2) Run DA market model without the PaP
@@ -259,17 +459,22 @@ if __name__ == "__main__":
 
         # SECOND: 2) COMPARE DA w/w.o. PaP
         # Visualize hours with price change
+        year = d_p.data.solar_weather_year  # for axis formatter
+
         mask_prices = ~np.isclose(d.results_dict['electricity_prices'][PPA_zone], d_p.results_dict['electricity_prices'][PPA_zone])
         fig, ax = plt.subplots(figsize=(12,6))
         x = d.results_dict['electricity_prices'][PPA_zone][mask_prices].index
         ax.scatter(x=x, y=d.results_dict['electricity_prices'][PPA_zone][mask_prices], label="DA")
         ax.scatter(x=x, y=d_p.results_dict['electricity_prices'][PPA_zone][mask_prices], label="w/ PaP", alpha=0.5)
         ax.legend()
-        ax.set_title(f"{PPA_zone}: Power prices before and after", loc='left')
+        ax.set_title(f"{PPA_zone}: Power prices before and after {PPA_profile}\nSpot price [€/MWh]", loc='left')
         prettify_subplots(ax)
-        ax.set_ylabel("DA price [€/MWh]")
-        ax.set_xlabel("Hour of year [h]")
+        ax.set_ylabel("")
+        ax.xaxis.set_major_formatter(make_hour_formatter(year=year))
+        ax.tick_params(axis='x', rotation=15)
+        ax.set_xlabel("")
         plt.show()
+
         # Print the number of changes for each decision variable
         for k in list(d.results_dict.keys()):
             num_cols = len(d.results_dict[k].columns)
@@ -280,22 +485,25 @@ if __name__ == "__main__":
         # PLOT electricity prices
         fig, ax = plt.subplots(figsize=(16,8))
         d.results_dict['electricity_prices'][PPA_zone].plot(ax=ax, label="DA")
-        d_p.results_dict['electricity_prices'][PPA_zone].plot(ax=ax, label="w/ PaP")
-        ax.set_title(f"{PPA_zone}: Power prices before and after", loc='left')
-        ax.set_ylabel("DA price [€/MWh]")
-        ax.set_xlabel("Hour of year [h]")
+        d_p.results_dict['electricity_prices'][PPA_zone].plot(ax=ax, label="w/ PaP", ls='--')
+        ax.set_title(f"{PPA_zone}: Power prices before and after {PPA_profile}\nSpot price [€/MWh]", loc='left')
+        ax.set_ylabel("")
+        ax.xaxis.set_major_formatter(make_hour_formatter(year=year))
+        ax.tick_params(axis='x', rotation=15)
+        ax.set_xlabel("")
         prettify_subplots(ax)
         plt.show()
 
         # PLOT electricity prices II: price-duration curves
         fig, ax = plt.subplots(figsize=(16,8))
         ax.plot(d.results_dict['electricity_prices'][PPA_zone].sort_values()[::-1].values, label="DA")
-        ax.plot(d_p.results_dict['electricity_prices'][PPA_zone].sort_values()[::-1].values, label="w/ PaP")
-        ax.set_title(f"{PPA_zone}: Power prices before and after", loc='left')
-        ax.set_ylabel("DA price [€/MWh]")
+        ax.plot(d_p.results_dict['electricity_prices'][PPA_zone].sort_values()[::-1].values, label="w/ PaP", ls='--')
+        ax.set_title(f"{PPA_zone}: Price-duration curves before and after {PPA_profile}\nSpot price [€/MWh]", loc='left')
+        ax.set_ylabel("")
         ax.set_xlabel("Hour of year [h]")
         prettify_subplots(ax)
         plt.show()
+
 
         # Base (non-PaP) keys only
         keys = sorted(k for k in set(d.results_econ['profits']) if not k.endswith('_PaP'))
@@ -311,36 +519,45 @@ if __name__ == "__main__":
             # Units-based profits should be handled differently
             if k in ['conventional_units', 'dh_units', 'hydro_res_units', 'ptx_units']:
                 count=0
-                vals_d.append(d.results_econ['profits'].get(k, np.nan).dot(units_mapping[k]).loc[PPA_zone])
+                vals_d.append(d.results_econ['profits'].get(k, np.nan).dot(units_mapping[k]).loc[PPA_zone] / 1e9)
 
                 base = d_p.results_econ['profits'].get(k, 0.0).dot(units_mapping[k]).loc[PPA_zone]
                 pap  = d_p.results_econ['profits'].get(f"{k}_PaP", 0.0)
                 if type(pap) != float:
                     pap = pap.loc[PPA_zone]
 
-                vals_dp_base.append(base)
-                vals_dp_pap.append(pap)   
+                vals_dp_base.append(base/1e9)
+                vals_dp_pap.append(pap/1e9)   
             elif k == 'demand_inflexible_classic':
-                vals_d.append(d.results_econ['profits'].get(k, np.nan).loc[PPA_zone] - d.results_dict['demand_inflexible_classic_bid_sol'].sum(axis=0).loc[PPA_zone] * d.data.voll_classic)
+                vals_d.append((d.results_econ['profits'].get(k, np.nan).loc[PPA_zone] - d.results_dict['demand_inflexible_classic_bid_sol'].sum(axis=0).loc[PPA_zone] * d.data.voll_classic)/1e9)
                 base = (
                     - d_p.results_dict['demand_inflexible_classic_bid_sol'] * d_p.results_dict['electricity_prices']
                 ).sum(axis=0)[PPA_zone]
-                vals_dp_base.append(base)
+                vals_dp_base.append(base/1e9)
                 pap = (
                     (d_p.results_dict['solar_pv_PaP_offer_sol'] + d_p.results_dict['wind_onshore_PaP_offer_sol'] + d_p.results_dict['wind_offshore_PaP_offer_sol'])
                     * (d_p.results_dict['electricity_prices'] - d_p.PPA2DA.s)
                 ).sum(axis=0)[PPA_zone]
-                vals_dp_pap.append(pap)
+                vals_dp_pap.append(pap/1e9)
+            elif k == 'lineflow (CR)':
+                df_CR = d.results_econ['profits']['lineflow (CR)']
+                vals_d.append(sum(df_CR.loc[line] for line in df_CR.index if PPA_zone in line.split("-"))/1e9)
+
+                df_CR_p = d_p.results_econ['profits']['lineflow (CR)']
+                base = sum(df_CR_p.loc[line] for line in df_CR_p.index if PPA_zone in line.split("-"))
+                pap = 0.0  # No PaP part for lines...
+                vals_dp_base.append(base/1e9)
+                vals_dp_pap.append(pap/1e9)
             else:
-                vals_d.append(d.results_econ['profits'].get(k, np.nan).loc[PPA_zone])
+                vals_d.append(d.results_econ['profits'].get(k, np.nan).loc[PPA_zone]/1e9)
 
                 base = d_p.results_econ['profits'].get(k, 0.0).loc[PPA_zone]
                 pap  = d_p.results_econ['profits'].get(f"{k}_PaP", 0.0)
                 if type(pap) != float:
                     pap = pap.loc[PPA_zone]
 
-                vals_dp_base.append(base)
-                vals_dp_pap.append(pap)
+                vals_dp_base.append(base/1e9)
+                vals_dp_pap.append(pap/1e9)
 
         x = np.arange(len(keys))
         width = 0.35
@@ -351,45 +568,105 @@ if __name__ == "__main__":
         ax.bar(x + width/2, vals_dp_pap, width, bottom=vals_dp_base, label="PPA part")
 
         ax.set_xticks(x, keys, rotation=90)
-        ax.set_ylabel("Profits [b.€]")
+        ax.set_ylabel("")
+        ax.set_title(fr"{PPA_zone}: Individual producer and consumer surpluses by technology/type -- before and after {PPA_profile} ($\gamma=${d_p.PPA2DA.gamma:.2f})"+"\nUtility|Profit [b.€]", loc="left")
         prettify_subplots(ax)
         plt.show()
         #conv, dh, hres, ptx, 
 
+        ''' Bar plots for the entire system (all zones)... not really that interesting
         # Base (non-PaP) keys only
         keys = sorted(k for k in set(d.results_econ['profits_tot']) if not k.endswith('_PaP'))
 
-        vals_d = []
-        vals_dp_base = []
-        vals_dp_pap = []
+        vals_d2 = []
+        vals_dp_base2 = []
+        vals_dp_pap2 = []
 
         for k in keys:
             if k == 'demand_inflexible_classic':
-                vals_d.append(0)
-                vals_dp_base.append(0)
-                vals_dp_pap.append(0)
+                vals_d2.append(0)
+                vals_dp_base2.append(0)
+                vals_dp_pap2.append(0)
             else:
-                vals_d.append(d.results_econ['profits_tot'].get(k, np.nan))
+                vals_d2.append(d.results_econ['profits_tot'].get(k, np.nan))
 
-                base = d_p.results_econ['profits_tot'].get(k, 0.0)
-                pap  = d_p.results_econ['profits_tot'].get(f"{k}_PaP", 0.0)
+                base2 = d_p.results_econ['profits_tot'].get(k, 0.0)
+                pap2  = d_p.results_econ['profits_tot'].get(f"{k}_PaP", 0.0)
 
-                vals_dp_base.append(base)
-                vals_dp_pap.append(pap)
+                vals_dp_base2.append(base2)
+                vals_dp_pap2.append(pap2)
 
         x = np.arange(len(keys))
         width = 0.35
         fig, ax = plt.subplots(figsize=(16,8))
 
-        ax.bar(x - width/2, vals_d, width, label="DA")
-        ax.bar(x + width/2, vals_dp_base, width, label="DA with PPA")
-        ax.bar(x + width/2, vals_dp_pap, width, bottom=vals_dp_base, label="PPA part")
+        ax.bar(x - width/2, vals_d2, width, label="DA")
+        ax.bar(x + width/2, vals_dp_base2, width, label="DA with PPA")
+        ax.bar(x + width/2, vals_dp_pap2, width, bottom=vals_dp_base2, label="PPA part")
 
         ax.set_xticks(x, keys, rotation=90)
         ax.set_ylabel("Profits [b.€]")
         prettify_subplots(ax)
         plt.show()
+        '''
+        # set inflex demand to 0 to get a better look at the other bars
+        dem_infl_idx = np.arange(len(keys))[np.array(keys)=='demand_inflexible_classic'][0]
+        vals_d3 = vals_d.copy()
+        vals_dp_base3 = vals_dp_base.copy()
+        vals_dp_pap3 = vals_dp_pap.copy()
+        vals_d3[dem_infl_idx] = 0
+        vals_dp_base3[dem_infl_idx] = 0
+        vals_dp_pap3[dem_infl_idx] = 0
 
+        fig, ax = plt.subplots(figsize=(16,8))
+        ax.bar(x - width/2, vals_d3, width, label="DA")
+        ax.bar(x + width/2, vals_dp_base3, width, label="DA with PPA")
+        ax.bar(x + width/2, vals_dp_pap3, width, bottom=vals_dp_base3, label="PPA part")
+
+        ax.set_xticks(x, keys, rotation=90)
+        ax.set_ylabel("")
+        ax.set_title(fr"{PPA_zone}: Individual producer and consumer surpluses by technology/type excl. inflex. demand -- before and after {PPA_profile} ($\gamma=${d_p.PPA2DA.gamma:.2f})"+"\nProfits [b.€]", loc="left")
+        prettify_subplots(ax)
+        plt.show()
+
+        # Horizontal bar plots
+        order = np.argsort(vals_d)
+
+        keys_s      = np.array(keys)[order]
+        vals_d_s    = np.array(vals_d)[order]
+        vals_dp_b_s = np.array(vals_dp_base)[order]
+        vals_dp_p_s = np.array(vals_dp_pap)[order]
+
+        y = np.arange(len(keys_s))
+        h = 0.25
+
+        fig, ax = plt.subplots(1, 3, figsize=(14, 8), sharey=True, width_ratios=[1, 0.1, 1])
+
+        # Plot 1
+        ax[0].barh(y - h, vals_d_s, height=h, label="DA")
+        ax[0].barh(y,     vals_dp_b_s, height=h, label="DA with PPA")
+        ax[0].barh(y,     vals_dp_p_s, height=h, left=vals_dp_b_s, label="PPA part")
+
+        # Plot 2 (inflex = 0, same order)
+        ax[2].barh(y - h, np.array(vals_d3)[order], height=h)
+        ax[2].barh(y,     np.array(vals_dp_base3)[order], height=h)
+        ax[2].barh(y,     np.array(vals_dp_pap3)[order],
+                height=h, left=np.array(vals_dp_base3)[order])
+
+        # Prettifying + legend
+        ax[0].set_yticks(y, keys_s)
+        ax[0].invert_yaxis()
+        prettify_subplots(ax[0], legend=False)
+        prettify_subplots(ax[2], legend=False)
+        handles, labels = ax[0].get_legend_handles_labels()
+        ax[1].legend(handles, labels, loc="upper center", frameon=False)
+        ax[1].axis("off")
+        ax[0].set_xlabel("Utility|Profit [b.€]")
+        ax[2].set_xlabel("Utility|Profit [b.€]")
+        ax[0].set_title(fr"{PPA_zone}: Individual PS and CS by type -- {PPA_profile} ($\gamma=${d_p.PPA2DA.gamma:.2f})", loc="left")
+        ax[2].set_title(f"REPEATED without {keys_s[0]}", loc="left")
+
+        plt.show()
 
         # FOURTH: Inspect PaP results
         # Prepare data
@@ -405,7 +682,7 @@ if __name__ == "__main__":
         lines_to = [str(l) for l in lines if l.endswith(PPA_zone)]
         lines_from = [str(l) for l in lines if l.startswith(PPA_zone)]
         trans_to = -d_p.lineflow.lower.sel(L=lines_to).min(dim="T").sum().item()
-        trans_from = d_p.lineflow.upper.sel(L=lines_from).min(dim="T").item()
+        trans_from = d_p.lineflow.upper.sel(L=lines_from).max(dim="T").sum().item()
         trans_cap = trans_to + trans_from
 
         # PPA zone as idx in bidding zones list
@@ -413,30 +690,28 @@ if __name__ == "__main__":
 
         # Plot for inspection
         fig, ax = plt.subplots(figsize=(16,8))
-        # Plot total VRE (excl. hydro ror) forecast
-        # "Free" VRE
         vre_prod = (d_p.data.wind_onshore_production + d_p.data.wind_offshore_production + d_p.data.solar_pv_production)[PPA_zone]# + d_p.data.hydro_ror_production)[PPA_zone]
-        # PPA-bound VRE
-        # Total VRE
-        # vre_prod.plot(ax=ax, label="VREs")
 
         # Plot the PaP VRE offered at negative prices
         vre_ppa_fore = (d_p.solar_pv_PPA_fore + d_p.wind_onshore_PPA_fore + d_p.wind_offshore_PPA_fore)[PPA_zone]
         vre_ppa_fore.plot(ax=ax, label="VRE in PaP")#, alpha=1)
 
         # Plot all types of consumption
-        inflex_cons.plot(ax=ax, label="inflex")#, alpha=0.9)
+        inflex_cons.plot(ax=ax, label="demand inflex. classic")#, alpha=0.9)
         if ADJUST_FLEX > 0:
-            (ADJUST_FLEX*flex_cons[PPA_zone_idx] + inflex_cons).plot(ax=ax, label="incl. flex")#, alpha=0.8)
-        if ADJUST_FLEX > 0:
-            (ADJUST_FLEX*(stor_cons[PPA_zone] + flex_cons[PPA_zone_idx]) + inflex_cons).plot(ax=ax, label="incl. flex+stor")#, alpha=0.7)
-        (ADJUST_TRANS * trans_cap + ADJUST_FLEX * (stor_cons[PPA_zone] + flex_cons[PPA_zone_idx]) + inflex_cons).plot(ax=ax, label=f"{"flex+stor" if ADJUST_FLEX>0 else "."}{"+ trans" if ADJUST_TRANS>0 else "."}")#, alpha=0.6)
+            (ADJUST_FLEX*flex_cons[PPA_zone_idx] + inflex_cons).plot(ax=ax, label="+flex. demand")#, alpha=0.8)
+        if ADJUST_STOR > 0:
+            (ADJUST_STOR * stor_cons[PPA_zone] + ADJUST_FLEX * flex_cons[PPA_zone_idx] + inflex_cons).plot(ax=ax, label="+flex. demand & stor")#, alpha=0.7)
+        (ADJUST_TRANS * trans_cap + ADJUST_STOR * stor_cons[PPA_zone] + ADJUST_FLEX * flex_cons[PPA_zone_idx] + inflex_cons).plot(ax=ax, label=f"{"+flex. demand" if ADJUST_FLEX>0 else "."}{" & stor" if ADJUST_STOR>0 else "."}{" & trans" if ADJUST_TRANS>0 else "."}")#, alpha=0.6)
 
         d_p.data.hydro_ror_production[PPA_zone].plot(ax=ax, label="hydro_ror")
         ax.set_xlim(200*24,200*24+1544)
-        prettify_subplots(ax)
-        ax.set_title(f"Power in {PPA_zone} production under PPA compared to CONS, FLEX, and TRANS capacities", loc='left')
-        ax.set_ylabel("Power [MW]")
+        ax.set_title(fr"{PPA_zone}: Power production under {PPA_profile} (with $\gamma=${d_p.PPA2DA.gamma:.2f}) compared to bids (inflex., flex., and stor.) and transmission capacities"+"\nPower [MW]", loc='left')
+        ax.set_xlabel("")
+        ax.set_ylabel("")
+        ax.xaxis.set_major_formatter(make_hour_formatter(year=year))
+        ax.tick_params(axis='x', rotation=15)
+        prettify_subplots(ax, bbox_list=[1.02, 0.8])
         plt.show()
 
         nbs_runner.x_pv, nbs_runner.x_wind_on, nbs_runner.x_wind_off, nbs_runner.ppa_data.x_pv, nbs_runner.ppa_data.x_wind_on, nbs_runner.ppa_data.x_wind_off
@@ -468,17 +743,18 @@ if __name__ == "__main__":
         # Analyze new dispatch of a presumed marginal generatorDK2 Waste
         prices_p = d_p.results_dict['electricity_prices']
         prices_p_filtered = prices_p[prices_p.lt(0).any(axis=1)][PPA_zone]
-        marg_gen = "DK2 Waste"
-        fig, ax = plt.subplots(figsize=(12,6))
-        unify_palette_cyclers(ax)
-        ax.scatter(x=prices_p_filtered.index, y=d.results_dict['conventional_units_offer_sol'][marg_gen].loc[prices_p_filtered.index], label="DA")
-        ax.scatter(x=prices_p_filtered.index, y=d_p.results_dict['conventional_units_offer_sol'][marg_gen].loc[prices_p_filtered.index], label="DA+PPA")
-        ax.axhline(y=d.data.agg_g.loc["DK2 Waste"].capacity_el, label=f"{marg_gen} max. capacity")
-        prettify_subplots(ax)
-        ax.set_title('Behaviour of a "new marginal generator" after the PPA implementation', loc='left')
-        ax.set_ylabel("Power generation [MW]")
-        ax.set_xlabel("Hour of year [h]")
-        plt.show()
+        if PPA_zone == "DK2":
+            marg_gen = "DK2 Waste"
+            fig, ax = plt.subplots(figsize=(12,6))
+            unify_palette_cyclers(ax)
+            ax.scatter(x=prices_p_filtered.index, y=d.results_dict['conventional_units_offer_sol'][marg_gen].loc[prices_p_filtered.index], label="DA")
+            ax.scatter(x=prices_p_filtered.index, y=d_p.results_dict['conventional_units_offer_sol'][marg_gen].loc[prices_p_filtered.index], label="DA+PPA")
+            ax.axhline(y=d.data.agg_g.loc["DK2 Waste"].capacity_el, label=f"{marg_gen} max. capacity")
+            prettify_subplots(ax)
+            ax.set_title('Behaviour of a "new marginal generator" after the PPA implementation', loc='left')
+            ax.set_ylabel("Power generation [MW]")
+            ax.set_xlabel("Hour of year [h]")
+            plt.show()
 
         fig, ax = plt.subplots(figsize=(12,6))
         tot_vre_ppa_disp_d = pd.concat([d.results_dict[tech][PPA_zone] for tech in ['solar_pv_offer_sol', 'wind_onshore_offer_sol','wind_offshore_offer_sol']], axis=1).sum(axis=1)
@@ -538,3 +814,9 @@ if __name__ == "__main__":
                 # mask_u_neg2 = (d_p.results_dict['electricity_prices'][PPA_zone] < -2)
                 # mask_l_neg19 = (d_p.results_dict['electricity_prices'][PPA_zone] > -19)
                 # d_p.results_dict['electricity_prices'][PPA_zone][mask_u_0 * mask_u_neg2 * mask_l_neg19]
+
+        print(pap2da.gamma)
+        for i, k in enumerate(keys):
+            print(f"{k:<25}: {vals_d[i]/1e9:>8.3f}, {vals_dp_base[i]/1e9:>8.3f}, {vals_dp_pap[i]/1e9:>8.3f}, base_ppa/da: {(vals_dp_base[i]/vals_d[i] if vals_d[i]>0 else 0):>8.3f}")
+
+# %%

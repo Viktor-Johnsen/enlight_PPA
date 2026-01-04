@@ -36,15 +36,17 @@ if __name__ == "__main__":
 
     # Inspect capture prices
     d=runner.enlight_model
-    print("Capture price inflex load: ", -(d.data.demand_inflexible_classic["DK1"] * d.results_dict['electricity_prices']["DK1"]).sum() / d.data.demand_inflexible_classic["DK1"].sum())
-    vre_tot = (d.data.solar_pv_production + d.data.wind_onshore_production + d.data.wind_offshore_production)["DK1"]
-    print("Capture price producer: ", (vre_tot * d.results_dict['electricity_prices']["DK1"]).sum() / vre_tot.sum())
-    print("Capture price FLEX (classic) load", -(d.results_dict['demand_flexible_classic_bid_sol']["DK1"] * d.results_dict['electricity_prices']["DK1"]).sum() / d.results_dict['demand_flexible_classic_bid_sol']["DK1"].sum())
-    print("Capture price FLEX (DH) load", -(d.results_dict["dh_units_bid_sol"].dot(d.data.L_DH_Z_df)["DK1"] * d.results_dict['electricity_prices']["DK1"]).sum() / d.results_dict["dh_units_bid_sol"].dot(d.data.L_DH_Z_df)["DK1"].sum())
-    print("Capture price FLEX (PtX) load", -(d.results_dict["ptx_units_bid_sol"].dot(d.data.L_PtX_Z_df)["DK1"] * d.results_dict['electricity_prices']["DK1"]).sum() / d.results_dict["ptx_units_bid_sol"].dot(d.data.L_PtX_Z_df)["DK1"].sum())
-
+    zone = "DELU"
+    print("Capture price inflex load: ", -(d.data.demand_inflexible_classic[zone] * d.results_dict['electricity_prices'][zone]).sum() / d.data.demand_inflexible_classic[zone].sum())
+    vre_tot = (d.data.solar_pv_production + d.data.wind_onshore_production + d.data.wind_offshore_production)[zone]
+    print("Capture price producer: ", (vre_tot * d.results_dict['electricity_prices'][zone]).sum() / vre_tot.sum())
+    print("Capture price FLEX (classic) load", -(d.results_dict['demand_flexible_classic_bid_sol'][zone] * d.results_dict['electricity_prices'][zone]).sum() / d.results_dict['demand_flexible_classic_bid_sol'][zone].sum())
+    print("Capture price FLEX (DH) load", -(d.results_dict["dh_units_bid_sol"].dot(d.data.L_DH_Z_df)[zone] * d.results_dict['electricity_prices'][zone]).sum() / d.results_dict["dh_units_bid_sol"].dot(d.data.L_DH_Z_df)[zone].sum())
+    print("Capture price FLEX (PtX) load", -(d.results_dict["ptx_units_bid_sol"].dot(d.data.L_PtX_Z_df)[zone] * d.results_dict['electricity_prices'][zone]).sum() / d.results_dict["ptx_units_bid_sol"].dot(d.data.L_PtX_Z_df)[zone].sum())
+    print("done.")
     # To run all scenarios at once instead: ;)
-    # from enlight.runner import EnlightRunner  # Updated import path
+    # from enlight_PPA.runners import EnlightRunner  # Updated import path
     # from pathlib import Path
     # runner = EnlightRunner()
     # runner.prepare_load_run_all_sims()
+    # print("done.")

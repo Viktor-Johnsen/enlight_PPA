@@ -9,7 +9,7 @@ import seaborn as sns
 from enlight_PPA.config_path import SIMULATIONS_DIR
 from enlight_PPA.data_ops import DataLoader
 import enlight_PPA.utils as utils  # <- for logging setup
-from enlight_PPA.utils.nbs_utils import unify_palette_cyclers, prettify_subplots, normalize_forecast_power
+from enlight_PPA.utils.nbs_utils import unify_palette_cyclers, prettify_subplots, normalize_forecast_power, make_hour_formatter
  
 @dataclass
 class PPAInputData:
@@ -174,7 +174,7 @@ class PPAInputCalcs:
             raise Exception(f"FileNotFoundError: Please provide an existing scenario name. No power prices are given under (full file path shown) {prices_file}.")
 
     def calculate_batt_power(self):
-        if self.ppa_data.x_tot_Z > 0:
+        if self.ppa_data.x_tot_Z > 0 and self.ppa_data.y_batt == 0:
             # capacity share at bidding zone level
             # If using zonal capacity, we also use the zonal capacity shares. It's easier that way.
             # Overwrite, y_batt and batt_Crate
@@ -247,16 +247,20 @@ class PPAInputCalcs:
 
         # Visualize the individual forecasts as a stacked line chart
         h0, hf = plot_hours
+        year = self.da_data.solar_weather_year
 
         fig, ax = plt.subplots(figsize=(12,6))
         unify_palette_cyclers(ax)
-        ax.fill_between(self.P_fore.index[h0:hf], 0, self.P_fore_off_wind[h0:hf], label="OFFshore Wind")
-        ax.fill_between(self.P_fore.index[h0:hf], self.P_fore_off_wind[h0:hf], (self.P_fore_off_wind+self.P_fore_on_wind)[h0:hf], label="ONshore Wind")
+        ax.fill_between(self.P_fore.index[h0:hf], 0, self.P_fore_off_wind[h0:hf], label="Offshore Wind")
+        ax.fill_between(self.P_fore.index[h0:hf], self.P_fore_off_wind[h0:hf], (self.P_fore_off_wind+self.P_fore_on_wind)[h0:hf], label="Onshore Wind")
         ax.fill_between(self.P_fore.index[h0:hf], (self.P_fore - self.P_fore_solar_pv)[h0:hf], self.P_fore[h0:hf], label="Solar PV")
         sns.lineplot(ax=ax, data=self.B_fore[h0:hf], label="Buyer")
         prettify_subplots(ax)
-        ax.set_ylabel('Power [MW]')
-        ax.set_title(f'PPA (in {self.ppa_data.Z}) producer generation and buyer consumption profiles', loc='left')
+        ax.set_xlabel('')  # Remove the automatic "Time" label
+        ax.set_ylabel('')  # Remove the automatic "DK2" label
+        ax.set_title(f'PPA (in {self.ppa_data.Z}) producer generation (Scen. {self.scenario_name.split("_")[-1]}) and buyer consumption profiles\nPower [MW]', loc='left')
+        ax.xaxis.set_major_formatter(make_hour_formatter(year=year))
+        plt.xticks(rotation=15)
         fig.tight_layout()
         plt.show()
 
@@ -265,7 +269,7 @@ class PPAInputCalcs:
         unify_palette_cyclers(ax)
         sns.lineplot(ax=ax, data=self.lambda_DA, label=r"$\lambda^{DA}_t$")
         prettify_subplots(ax)
-        ax.set_ylabel(f"Power price in {self.ppa_data.Z} [€/MWh]")
+        ax.set_ylabel(f"Power price in {self.ppa_data.Z}, Scen. {self.scenario_name.strip("_")[-1]} [€/MWh]")
         ax.legend().remove()
         plt.show()
 
@@ -300,8 +304,8 @@ class NBSSetup:
     gamma_UB : float = 1 # PaP: Minimum PPA capacity share volume
     
     # CVaR parameters
-    beta_D : float = 0.5  # CVaR: Risk-aversion level of developer
-    beta_O : float = 0.5  # CVaR: Risk-aversion level of off-taker
+    beta_P : float = 0.5  # CVaR: Risk-aversion level of developer
+    beta_B : float = 0.5  # CVaR: Risk-aversion level of off-taker
     alpha : float = 0.75
 
     nbs_setup_logger : Logger | None = None

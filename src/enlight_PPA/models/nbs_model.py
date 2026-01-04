@@ -46,8 +46,8 @@ class NBSModel:
         M_UB : float = 1,  # BL: Maximum baseload volume
         gamma_LB : float = 0, # PaP: Minimum PPA capacity share volume
         gamma_UB : float = 1, # PaP: Minimum PPA capacity share volume
-        beta_D : float = 0.5,  # CVaR: Risk-aversion level of developer
-        beta_O : float = 0.5,  # CVaR: Risk-aversion level of off-taker
+        beta_P : float = 0.5,  # CVaR: Risk-aversion level of developer
+        beta_B : float = 0.5,  # CVaR: Risk-aversion level of off-taker
         alpha : float = 0.75,  # CVaR: Tail of interest for CVaR
         nbs_model_logger : logging.Logger | None = None,
     ) -> None:
@@ -56,7 +56,7 @@ class NBSModel:
         Initialize the NBS model with necessary parameters, variables, and constraints.
         '''
         self.nbs_model_logger = nbs_model_logger or utils.setup_logging(log_file="nbs.log")
-        self.nbs_model_logger.info(f"NBSModel: INITIALIZING model with betas=(O:{beta_O}, D:{beta_D})")
+        self.nbs_model_logger.info(f"NBSModel: INITIALIZING model with betas=(O:{beta_B}, D:{beta_P})")
         
         self.PPA_profile = PPA_profile
 
@@ -96,8 +96,8 @@ class NBSModel:
         self.M_UB = M_UB
         self.gamma_LB = gamma_LB
         self.gamma_UB = gamma_UB
-        self.beta_D = beta_D
-        self.beta_O = beta_O
+        self.beta_P = beta_P
+        self.beta_B = beta_B
         self.alpha = alpha
 
         self.palette = load_plot_configs(only_get_palette=True)
@@ -125,8 +125,8 @@ class NBSModel:
         - *M_LB : minimum BL volume
         - *M_UB : maximum BL volume
         CVaR
-            - *beta_D : risk-averseness level of developer
-            - *beta_O : risk-averseness level of off-taker
+            - *beta_P : risk-averseness level of developer
+            - *beta_B : risk-averseness level of off-taker
             - *alpha : tail of interest
         '''
         self.PROB_w = np.full(shape=self.W, fill_value=1/self.W)  # all scenarios are equiprobable
@@ -152,8 +152,8 @@ class NBSModel:
         VAR_D = np.sort(PI_D_w)[VAR_idx]
         ETA_D_w = VAR_D - PI_D_w  # Difference between VaR and expected profit in each scenario. We want to minimize this when we are risk-averse
         self.d_D = (
-            (1 - self.beta_D) * sum([PI_D_w[w] * self.PROB_w[w] for w in range(self.W)])
-            + self.beta_D * (VAR_D - 1/(1-self.alpha) * sum([ETA_D_w[w] * self.PROB_w[w] for w in range(self.W) if ETA_D_w[w] >= 0]))
+            (1 - self.beta_P) * sum([PI_D_w[w] * self.PROB_w[w] for w in range(self.W)])
+            + self.beta_P * (VAR_D - 1/(1-self.alpha) * sum([ETA_D_w[w] * self.PROB_w[w] for w in range(self.W) if ETA_D_w[w] >= 0]))
         )
         self.PI_D_w, self.VAR_D, self.ETA_D_w = PI_D_w, VAR_D, ETA_D_w
 
@@ -162,8 +162,8 @@ class NBSModel:
         VAR_O = np.sort(PI_O_w)[VAR_idx]  # we need the maximum loss
         ETA_O_w = VAR_O - PI_O_w  # Difference between VaR and expected utility in each scenario. We want to minimize this when we are risk-averse
         self.d_O = (
-            (1 - self.beta_O) * sum([PI_O_w[w] * self.PROB_w[w] for w in range(self.W)])
-            + self.beta_O * (VAR_O - 1/(1-self.alpha) * sum([ETA_O_w[w] * self.PROB_w[w] for w in range(self.W) if ETA_O_w[w] >= 0]))
+            (1 - self.beta_B) * sum([PI_O_w[w] * self.PROB_w[w] for w in range(self.W)])
+            + self.beta_B * (VAR_O - 1/(1-self.alpha) * sum([ETA_O_w[w] * self.PROB_w[w] for w in range(self.W) if ETA_O_w[w] >= 0]))
         )
         self.PI_O_w, self.VAR_O, self.ETA_O_w = PI_O_w, VAR_O, ETA_O_w
         '''
@@ -199,8 +199,8 @@ class NBSModel:
             # print(f"Value at Risk at {alpha*100}% confidence level:\n", VAR_D)
             # print("Excess over VaR per scenario:\n", ETA_D_w)
             self.d_D = (
-                (1 - self.beta_D) * self.hp.model.ObjVal  # Expected profit
-                + self.beta_D  # CVaR term in objective
+                (1 - self.beta_P) * self.hp.model.ObjVal  # Expected profit
+                + self.beta_P  # CVaR term in objective
                     * (VAR_D
                        - 1/(1-self.alpha)
                          # probability-weighted profits BELOW CVaR. 0 if above:
@@ -472,9 +472,9 @@ class NBSModel:
         # Add aux constraints to make obj readable
         self.model.addConstr(self.u_D
                         ==
-                        (1 - self.beta_D)
+                        (1 - self.beta_P)
                         * (self.PROB_w * self.y_D).sum()  # Expected profit
-                        + self.beta_D
+                        + self.beta_P
                         * (self.zeta_D  # The CVaR term
                            - 1/(1-self.alpha)
                            * (self.PROB_w * self.eta_D_w).sum()
@@ -483,8 +483,8 @@ class NBSModel:
 
         self.model.addConstr(self.u_O
                         ==
-                        (1 - self.beta_O) * (self.PROB_w * self.y_O).sum()  # Expected net utility
-                        + self.beta_O
+                        (1 - self.beta_B) * (self.PROB_w * self.y_O).sum()  # Expected net utility
+                        + self.beta_B
                         * (self.zeta_O  # The CVaR term,
                            - 1/(1-self.alpha)
                            * (self.PROB_w * self.eta_O_w).sum()
@@ -628,13 +628,13 @@ class NBSModel:
                 ax.fill_between(range(self.T)[:max_hour_shown], perc(self.lambda_DA_w, low_perc)[:max_hour_shown], perc(self.lambda_DA_w, high_perc)[:max_hour_shown], alpha=0.4, label='DA price 10-90 percentile')
             ax.axhline(S_X, color='k', linestyle='-.', label=f'Optimal {self.PPA_profile} PPA strike price $S$')
             ax.set_ylabel('Price [€/MWh]')
-            ax.set_title(fr"DA prices – Buyer with $\beta^B$={self.beta_O}, and Producer with $\beta^P$={self.beta_D}", loc='left')
+            ax.set_title(fr"DA prices – Buyer with $\beta^B$={self.beta_B}, and Producer with $\beta^P$={self.beta_P}", loc='left')
             prettify_subplots(ax)
             plt.show()
         else:
             print("No results to show. No optimal solution was found.")
 
-    def visualize_example_profit_dist(self, bars=False):
+    def visualize_example_profit_dist(self, bars=False, presentation=False):
         if self.model.status == GRB.OPTIMAL:
 
             # # Compare their revenues distributions before and after
@@ -670,24 +670,26 @@ class NBSModel:
                         width=bar_width, alpha=0.6, label="Before")
                 ax[0].bar(w_idx + bar_width/2, self.y_D.X,
                         width=bar_width, alpha=0.6, label="After PPA")
-                ax[0].bar(x=w_idx + bar_width/2, height=self.eta_D_w.X,
+                if not presentation:
+                    ax[0].bar(x=w_idx + bar_width/2, height=self.eta_D_w.X,
                           bottom=self.y_D.X, width=bar_width, alpha=0.6, label="CVaR weight")
-                ax[0].axhline(self.VAR_D, ls="--", label="VaR before")
-                ax[0].axhline(self.zeta_D.X, ls="-.", label="VaR after")
+                    ax[0].axhline(self.VAR_D, ls="--", label="VaR before")
+                    ax[0].axhline(self.zeta_D.X, ls="-.", label="VaR after")
 
                 # --- Off-taker ---
                 ax[1].bar(w_idx - bar_width/2, power_costs_O_w,
                         width=bar_width, alpha=0.6, label="Before")
                 ax[1].bar(w_idx + bar_width/2, power_costs_O_w_NBS,
                         width=bar_width, alpha=0.6, label="After PPA")
-                ax[1].bar(x=w_idx + bar_width/2, height=self.eta_O_w.X,
+                if not presentation:
+                    ax[1].bar(x=w_idx + bar_width/2, height=self.eta_O_w.X,
                           bottom=power_costs_O_w_NBS, width=bar_width, alpha=0.6, label="CVaR weight")
-                ax[1].axhline(VAR_O_power_costs, ls="--", label="VaR before")
-                if self.beta_O == 0:
-                    ax[1].axhline(self.zeta_O.X, ls="-.", label="VaR after")
-                else:
-                    ax[1].axhline(zeta_O_power_costs, ls="-.", label="VaR after")
-                ax[1].set_title(fr"Buyer POWER COSTS (no WTP) – $\beta^O=${self.beta_O}")
+                    ax[1].axhline(VAR_O_power_costs, ls="--", label="VaR before")
+                    if self.beta_B == 0:
+                        ax[1].axhline(self.zeta_O.X, ls="-.", label="VaR after")
+                    else:
+                        ax[1].axhline(zeta_O_power_costs, ls="-.", label="VaR after")
+                ax[1].set_title(fr"Buyer POWER COSTS (no WTP) – $\beta_B=${self.beta_B}")
             else:  # histogram
                 ax[0].hist(self.PI_D_w, color='r', alpha=0.5, label='Before')
                 ax[0].axvline(x=self.VAR_D, color='r', linestyle='--', label='VaR before')
@@ -700,9 +702,9 @@ class NBSModel:
                 ax[0].axvline(x=self.zeta_D.X, linestyle='--', label='VaR after')
                 ax[1].hist(self.y_O.X, alpha=0.5, label='after PPA')
                 ax[1].axvline(x=self.zeta_O.X, linestyle='--', label='VaR after')
-                ax[1].set_title(fr"Buyer UTILITY – $\beta^O=${self.beta_O}")
+                ax[1].set_title(fr"Buyer UTILITY – $\beta_B=${self.beta_B}")
 
-            ax[0].set_title(fr"{self.PPA_profile}{(f"({self.BL_compliance_perc})" if self.BL else "")}: Producer PROFITS – $\beta^D=${self.beta_D}   ")
+            ax[0].set_title(fr"{self.PPA_profile}{(f"({self.BL_compliance_perc})" if self.BL else "")}: Producer PROFITS – $\beta_P=${self.beta_P}   ")
             prettify_subplots(ax)
             ax[0].legend_.remove()
             for ax_ in ax:
@@ -720,8 +722,6 @@ class NBSModel:
                 for i in range(self.W)[:4]:
                     fig, ax = plt.subplots(figsize=(10,6))
                     unify_palette_cyclers(ax)
-                    ax2 = ax.twinx()
-                    unify_palette_cyclers(ax2)
 
                     # Plot and compare total power available and offered
                     # ax.plot(d.P_DA_w[:,i], alpha=.7, label=r"$\overline{P}^{DA}$")
@@ -741,8 +741,7 @@ class NBSModel:
                     # ax2.axhline(d.S.X, c='k', label="S")
                     # ax2.legend(loc='upper right')
                     ax.set_title(f"w = {i}")
-                    prettify_subplots(ax)
-                    prettify_subplots(ax2)
+                    prettify_subplots(ax, bbox_list=[1.05, 1])
                     plt.show()
 
             elif self.BL:
@@ -757,8 +756,8 @@ class NBSModel:
                     ax.plot(self.v_min.X[hours_shown, w_BESS], label="v_min", c='r', alpha=.5)
                 ax.plot(self.SOC.X[hours_shown, w_BESS], label="SOC", ls=':', alpha=0.3)
                 ax.axhline(self.M.X, c='k', label="BL volume", alpha=.4)
-                if self.beta_D == 1.0:
-                    ax.set_title(r'Beware! Nonsensical for $\beta_D=1.0$')
+                if self.beta_P == 1.0:
+                    ax.set_title(r'Beware! Nonsensical for $\beta_P=1.0$')
                 # plt.plot(d.y_ch.X[: ,w] * d.y_dch.X[: ,w])
                 prettify_subplots(ax)
         else:
@@ -828,11 +827,11 @@ class NBSMultModel:
         self.gamma_UB = gamma_UB
         self.alpha = alpha
 
-    def run_multiple_NBS_models(self, beta_O_list, beta_D_list):
+    def run_multiple_NBS_models(self, beta_B_list, beta_P_list):
         self.nbs_mult_logger.info(f"NBSMultModel: SOLVING multiple NBS models using NBSMultModel instance")
 
-        self.beta_O_list = beta_O_list
-        self.beta_D_list = beta_D_list
+        self.beta_B_list = beta_B_list
+        self.beta_P_list = beta_P_list
 
         # Initialize result dictionaries
         results_S = {}
@@ -844,10 +843,10 @@ class NBSMultModel:
         
 
         ##### LOOP OVER BETAS #####
-        for beta_O in beta_O_list:
-            results_S[beta_O] = {}
-            results_volume[beta_O] = {}
-            models[beta_O] = {}
+        for beta_B in beta_B_list:
+            results_S[beta_B] = {}
+            results_volume[beta_B] = {}
+            models[beta_B] = {}
 
             # Model solves much faster if set between 0 and 1 (if demand is higher than the Producer forecast the values are still close to 1)
             if NORMALIZE_INPUTS:
@@ -857,7 +856,7 @@ class NBSMultModel:
                 self.P_batt_norm = self.P_batt / self.P_fore_w_max
                 self.L_t_norm = self.L_t / self.P_fore_w_max
 
-            for beta_D in beta_D_list:        
+            for beta_P in beta_P_list:        
                 # Initialize NBS instance.
                 t0b = time.time()
                 nbs_model = NBSModel(
@@ -876,13 +875,13 @@ class NBSMultModel:
                     M_LB=self.M_LB,
                     M_UB=(1 if NORMALIZE_INPUTS else self.M_UB),  # BL volume
                     gamma_LB=self.gamma_LB, gamma_UB=self.gamma_UB,  # PaP volume
-                    beta_D=beta_D, beta_O=beta_O, alpha=self.alpha,
+                    beta_P=beta_P, beta_B=beta_B, alpha=self.alpha,
                     nbs_model_logger=self.nbs_mult_logger,
                 )
                 hybrid_plant_model = nbs_model.hp
-                models[beta_O][beta_D] = nbs_model
+                models[beta_B][beta_P] = nbs_model
                 # Build the mathematical model.
-                # print(f"\nSolving for β_D = {beta_D}, β_O = {beta_O} ...")
+                # print(f"\nSolving for β_D = {beta_P}, β_O = {beta_B} ...")
                 tb = time.time()
                 # Solve the optimization problem.
                 nbs_model.solve_model()
@@ -892,45 +891,45 @@ class NBSMultModel:
                 # Save the results of PPA price and volume explicitly if it was solved to optimality.
                 if nbs_model.model.status == GRB.OPTIMAL:
                     self.nbs_mult_logger.info("Solved to optimality!")
-                    results_S[beta_O][beta_D] = nbs_model.S.X
+                    results_S[beta_B][beta_P] = nbs_model.S.X
                     if nbs_model.BL:
                         if NORMALIZE_INPUTS:
-                            results_volume[beta_O][beta_D] = nbs_model.M.X * self.P_fore_w_max
+                            results_volume[beta_B][beta_P] = nbs_model.M.X * self.P_fore_w_max
                         else:
-                            results_volume[beta_O][beta_D] = nbs_model.M.X
+                            results_volume[beta_B][beta_P] = nbs_model.M.X
                     elif nbs_model.PPA_profile in ['PaF', 'PaP']:
                         # No need for checking for normalization. It's already between 0 and 1.
-                        results_volume[beta_O][beta_D] = nbs_model.gamma.X
+                        results_volume[beta_B][beta_P] = nbs_model.gamma.X
                 elif nbs_model.model.status == GRB.TIME_LIMIT:
                     self.nbs_mult_logger.info(f"Stopped due to time limit: S: {nbs_model.S.Xn:.2f}")
-                    results_S[beta_O][beta_D] = np.nan
-                    results_volume[beta_O][beta_D] = np.nan
+                    results_S[beta_B][beta_P] = np.nan
+                    results_volume[beta_B][beta_P] = np.nan
                 else:
                     self.nbs_mult_logger.info("Model was infeasible or unbounded...")
-                    results_S[beta_O][beta_D] = np.nan
-                    results_volume[beta_O][beta_D] = np.nan
+                    results_S[beta_B][beta_P] = np.nan
+                    results_volume[beta_B][beta_P] = np.nan
 
         self.results_S, self.results_volume, self.models, self.hybrid_plant_model = results_S, results_volume, models, hybrid_plant_model
 
     def visualize_risk_impact_heatmap(self):
-        # beta_D_grid, beta_O_grid = np.meshgrid(self.beta_D_list, self.beta_O_list)
-        S_vals = np.array([[self.results_S[bO][bD] for bD in self.beta_D_list] for bO in self.beta_O_list])
-        volume_vals = np.array([[self.results_volume[bO][bD] for bD in self.beta_D_list] for bO in self.beta_O_list])
+        # beta_D_grid, beta_O_grid = np.meshgrid(self.beta_P_list, self.beta_B_list)
+        S_vals = np.array([[self.results_S[bO][bD] for bD in self.beta_P_list] for bO in self.beta_B_list])
+        volume_vals = np.array([[self.results_volume[bO][bD] for bD in self.beta_P_list] for bO in self.beta_B_list])
 
         fig, axs = plt.subplots(1, 2, figsize=(12, 5))
         # unify_palette_cyclers(axs)
-        im1 = axs[0].imshow(S_vals, origin='lower', cmap='coolwarm',
-                            extent=[min(self.beta_D_list), max(self.beta_D_list), min(self.beta_O_list), max(self.beta_O_list)], aspect='auto')
+        im1 = axs[0].imshow(S_vals, origin='lower', cmap='inferno',
+                            extent=[min(self.beta_P_list), max(self.beta_P_list), min(self.beta_B_list), max(self.beta_B_list)], aspect='auto')
         axs[0].set_title("Strike price (S in [€/MWh])")
-        axs[0].set_xlabel(r"$\beta_D$")
-        axs[0].set_ylabel(r"$\beta_O$")
+        axs[0].set_xlabel(r"$\beta_P$")
+        axs[0].set_ylabel(r"$\beta_B$")
         fig.colorbar(im1, ax=axs[0])
 
-        im2 = axs[1].imshow(volume_vals, origin='lower', cmap='viridis',
-                            extent=[min(self.beta_D_list), max(self.beta_D_list), min(self.beta_O_list), max(self.beta_O_list)], aspect='auto')
+        im2 = axs[1].imshow(volume_vals, origin='lower', cmap='cividis',
+                            extent=[min(self.beta_P_list), max(self.beta_P_list), min(self.beta_B_list), max(self.beta_B_list)], aspect='auto')
         axs[1].set_title(f"{self.PPA_profile} volume {"(M in [MW])" if self.BL else "($\\gamma$ in [pu])"}")
-        axs[1].set_xlabel(r"$\beta_D$")
-        axs[1].set_ylabel(r"$\beta_O$")
+        axs[1].set_xlabel(r"$\beta_P$")
+        axs[1].set_ylabel(r"$\beta_B$")
         fig.colorbar(im2, ax=axs[1])
 
         prettify_subplots(axs)
@@ -939,65 +938,3 @@ class NBSMultModel:
             ax.legend_.remove()
         plt.tight_layout()
         plt.show()
-
-
-#%%
-if __name__ == "__main__":
-    load_plot_configs()
-    t0 = time.time()
-    # Fixed parameters:
-    alpha = 0.75  # CVaR: tail of interest
-
-    # Capture price VRE: (d.P_DA_w * d.lambda_DA_w).sum() / d.P_DA_w.sum() = 96.38 €/MWh
-    # Capture price load: - (d.L_t * d.lambda_DA_w).sum() / (d.W * d.L_t.sum()) = -98.1 €/MWh
-    S_LB, S_UB = 96.38 * 0.5, 98.1*1.5  # PPA strike price bounds
-    M_LB, M_UB = 0.01, 0.99  # BL volume bounds.
-    gamma_LB, gamma_UB = 0, 1  # PaP capacity share bounds.
-
-    # Profile type
-    PPA_profile = 'PaP'
-    BL_compliance_perc = 0.1
-
-    # Define ranges for betas
-    beta_D_list = np.round(np.arange(0.0, 0.3, 0.1), 2)  # avoid floating point issues
-    beta_O_list = np.round(np.arange(0.0, 0.3, 0.1), 2)  # avoid floating point issues
-
-    P_fore_w, lambda_DA_w, L_t, WTP = generate_data()
-    P_batt, batt_eta, batt_Crate = specify_battery_data()
-
-    runner = NBSMultModel(
-        PPA_profile=PPA_profile,  # Type of PPA profile ('PaF', 'PaP', or 'BL')
-        BL_compliance_perc=BL_compliance_perc, # indicates the enforced compliance of the producer: meaning the % of PPA volume where the producer has to match the BL volume on an hourly basis
-        P_fore_w=P_fore_w,
-        P_batt=P_batt,
-        batt_eta=batt_eta,
-        batt_Crate=batt_Crate,
-        L_t=L_t,
-        lambda_DA_w=lambda_DA_w,
-        WTP=WTP,
-        # add_batt=True,
-        S_LB=S_LB,  # Minimum PPA strike price
-        S_UB=S_UB,  # Maximum PPA strike price
-        M_LB=M_LB,  # BL: Minimum baseload volume
-        M_UB=M_UB,  # BL: Maximum baseload volume
-        gamma_LB=gamma_LB, # PaP: Minimum PPA capacity share volume
-        gamma_UB=gamma_UB, # PaP: Minimum PPA capacity share volume
-        alpha=alpha,  # CVaR: Tail of interest for CVaR
-    )
-    #%%
-    runner.run_multiple_NBS_models(beta_O_list=beta_O_list,
-                                   beta_D_list=beta_D_list)
-
-    runner.visualize_risk_impact_heatmap()
-
-    beta_O_chosen=beta_O_list[0]
-    beta_D_chosen=beta_D_list[0]
-
-    # For debugging
-    d = runner.models[beta_O_chosen][beta_D_chosen]
-    # end
-
-    d.visualize_example_outcome()
-    d.visualize_example_profit_dist()
-    d.verify_behaviour()
-    print(f"Total time elapsed: {time.time()-t0:.2f}")

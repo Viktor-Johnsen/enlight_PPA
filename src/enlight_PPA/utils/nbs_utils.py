@@ -64,7 +64,7 @@ def unify_palette_cyclers(axs):  # run BEFORE plotting
             ax._get_patches_for_fill = ax._get_lines
         return axs
     
-def prettify_subplots(axs, legend=True, grid=True):  # run AFTER plotting
+def prettify_subplots(axs, legend=True, grid=True, bbox_list=[1, 1.02]):  # run AFTER plotting
     if not type(axs) == np.ndarray:
         # Shape of subplots of (1,1)
         ax = axs  # to symbolize that there is only one axis
@@ -76,7 +76,7 @@ def prettify_subplots(axs, legend=True, grid=True):  # run AFTER plotting
         ax.margins(0.005)  # Remove whitespace inside each plot
         ax.spines[['bottom','left']].set_alpha(0.5)  # Introduce opacity to the x- and y-axes spines
         if legend:
-            ax.legend(bbox_to_anchor=[1, 1.02], frameon=False)
+            ax.legend(bbox_to_anchor=bbox_list, frameon=False)
         return ax
     else:
         for ax in axs:
@@ -261,6 +261,7 @@ def plot_market_clearing_outcome(
         t : list[int],
         bl2da : BL2DA,
         *,
+        year=2020,
         show=True,
         ):
     # cr = crs_opt[0]          # or loop over cr
@@ -342,8 +343,8 @@ def plot_market_clearing_outcome(
     bids_tot = bids_df.sum(axis=1)
     bids_tot.plot(ax=ax, label="Total consumption", c='k', ls='--')
 
-    ax.set_ylabel("Power [MW]")
-    ax.set_title(f"Market clearing constraint outcome — CR = {cr}, Z = {Z}")
+    ax.set_ylabel("")
+    ax.set_title(f"{Z}: Power balance from DA market clearing — compl. rate = {dp.PPA2DA.compl_rate}\nPower [MW]", loc="left")
 
     ax.legend(
         loc="center left",
@@ -354,7 +355,20 @@ def plot_market_clearing_outcome(
         ax.axhline(bl2da.m, color="k", lw=0.8, label="M (BL)")
     # for val in [16,  17,  18,  19,  20,  21,  22,  23,  24,  25, 32,  64,  65,  67]:
     #     ax.axvline(val, color="k", alpha=0.25)
+    ax.xaxis.set_major_formatter(make_hour_formatter(year=year))
+    ax.tick_params(axis='x', rotation=15)
+    ax.set_xlabel("")
+    prettify_subplots(ax)
     if show:
         plt.show()
 
     return offers_df, bids_df
+
+def make_hour_formatter(year: int):
+        '''
+        Used to change x-axis from hour number to date-time format.
+        '''
+        start = pd.Timestamp(f"{year}-01-01")
+        def _formatter(x, pos):
+            return (start + pd.Timedelta(hours=int(x) - 1)).strftime("%Y-%m-%d %H:%M")
+        return _formatter
