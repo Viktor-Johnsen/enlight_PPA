@@ -43,6 +43,7 @@ class NBSRunner:
                  x_wind_off : float = 0.3,
                  x_buyer : float = 0.4,
                  y_batt : float = 0,
+                 batt_Crate : float = 1,
                  S_UB : float = 250,
                  ) -> None:
         """Initialize the NBSRunner."""
@@ -63,6 +64,7 @@ class NBSRunner:
         self.x_wind_off = x_wind_off
         self.x_buyer = x_buyer
         self.y_batt = y_batt
+        self.batt_Crate = batt_Crate
         self.S_UB = S_UB
 
         self.palette = load_plot_configs()  # conform plotting palette and more
@@ -107,7 +109,7 @@ class NBSRunner:
             x_wind_off=self.x_wind_off,
             y_batt=self.y_batt,  # p_batt/p_vre,
             batt_eta=float(np.sqrt(0.9)),
-            batt_Crate=1,
+            batt_Crate=self.batt_Crate,
             x_buyer=self.x_buyer,  # P_buyer.mean()/P_vre
             ppa_logger=self.nbs_runner_logger,
         )

@@ -530,11 +530,16 @@ class NBSModel:
         vars_to_save = {
             "S": self.S,
             "eta_D_w": self.eta_D_w,
+            "eta_O_w": self.eta_O_w,
             "log_uD_dD": self.log_uD_dD,
             "u_D": self.u_D,
+            "u_O": self.u_O,
             "x_D": self.x_D,
+            "x_O": self.x_O,
             "y_D": self.y_D,
+            "y_O": self.y_O,
             "zeta_D": self.zeta_D,
+            "zeta_O": self.zeta_O,
         }
         if self.BL:
             vars_to_save["p_DA"] = self.p_DA

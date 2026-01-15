@@ -8,7 +8,7 @@ from enlight_PPA.models import EnlightModel
 import enlight_PPA.utils as utils
 from enlight_PPA.data_ops import DataVisualizer
 from enlight_PPA.data_ops import ResultsVisualizer
-from enlight_PPA.models.ppa_exploration import load_plot_configs
+from enlight_PPA.utils.nbs_utils import load_plot_configs
 
 
 class EnlightRunner:
@@ -117,7 +117,7 @@ class EnlightRunner:
         # Run the model
         self.enlight_model.run_model()
 
-    def visualize_data(self, example_hour: int) -> None:
+    def visualize_data(self, example_hour: int, chosen_zones : list = None) -> None:
         """Visualize the data using DataVisualizer (placeholder method)."""
         # Check if the attribute has already been initialized
         #   by e.g. visualize_NBS_data().
@@ -130,7 +130,7 @@ class EnlightRunner:
             )
         self.data_vis.plot_annual_total_loads()
         self.data_vis.plot_total_installed_capacity()
-        self.data_vis.plot_profiles(starting_hour=example_hour)
+        self.data_vis.plot_profiles(starting_hour=example_hour, chosen_zones=chosen_zones)
         self.data_vis.plot_aggregated_supply_and_demand_curves(example_hour=example_hour)
 
         self.logger.info("Data visualization completed.")

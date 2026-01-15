@@ -801,6 +801,44 @@ def set_agg_idx(df):
 
     return df_agg
 
+def get_capture_price_zonal(object, var_name, zone, generator=True):
+    d=object
+    offer_or_bid = ("_offer_" if generator else "_bid_")
+    var_sol = d.results_dict[var_name+offer_or_bid+"sol"]
+    if var_sol[zone].sum() != 0:
+        cp = (var_sol[zone] * d.results_dict['electricity_prices'][zone]).sum() / var_sol[zone].sum()
+    else:
+        return np.nan
+    if generator:
+        return cp
+    else:
+        return -cp
+
+def get_capture_price_units(object, var_name, mapping, zone, generator=True):
+    d=object
+    offer_or_bid = ("_offer_" if generator else "_bid_")
+    var_sol_units = d.results_dict[var_name+offer_or_bid+"sol"]
+    var_sol = var_sol_units.dot(mapping)
+    if var_sol[zone].sum() != 0:
+        cp = (var_sol[zone] * d.results_dict['electricity_prices'][zone]).sum() / var_sol[zone].sum()
+    else:
+        return np.nan
+    if generator:
+        return cp
+    else:
+        return -cp
+
+def get_capture_price_vre(object, var_name, zone):
+    '''to base the calculation off of the forecast production (in the denominator only!)'''
+    d=object
+    var_sol = d.results_dict[var_name+"_offer_sol"]
+    var_fore = getattr(d.data, var_name+"_production")
+    if var_sol[zone].sum() != 0:
+        cp = (var_sol[zone] * d.results_dict['electricity_prices'][zone]).sum() / var_fore[zone].sum()
+    else:
+        return np.nan
+    return cp
+
 #### OBSOLETE FUNCTIONS - DO NOT CONSIDER ####
 
 # Function to extract results

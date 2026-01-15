@@ -9,6 +9,33 @@ import enlight_PPA.utils as utils
 from enlight_PPA.data_ops import DataProcessor
 from enlight_PPA.data_ops import DataLoader
 
+# avoid circular imports close to deadline...
+def prettify_subplots(axs, legend=True, grid=True, bbox_list=[1, 1.02]):  # run AFTER plotting
+    if not type(axs) == np.ndarray:
+        # Shape of subplots of (1,1)
+        ax = axs  # to symbolize that there is only one axis
+        ax.spines[['right', 'top']].set_visible(False)  # Remove spines
+        if grid:
+            ax.grid(alpha=.25)  # Add opaque gridlines
+        else:
+            ax.grid(False)
+        ax.margins(0.005)  # Remove whitespace inside each plot
+        ax.spines[['bottom','left']].set_alpha(0.5)  # Introduce opacity to the x- and y-axes spines
+        if legend:
+            ax.legend(bbox_to_anchor=bbox_list, frameon=False)
+        return ax
+    else:
+        for ax in axs:
+            ax.spines[['right', 'top']].set_visible(False)  # Remove spines
+            if grid:
+                ax.grid(alpha=.25)  # Add opaque gridlines
+            else:
+                ax.grid(False)
+            ax.margins(0.005)  # Remove whitespace inside each plot
+            ax.spines[['bottom','left']].set_alpha(0.5)  # Introduce opacity to the x- and y-axes spines
+            if legend:
+                ax.legend(bbox_to_anchor=[1, 1.02], frameon=False)
+        return axs
 
 class DataVisualizer:
     """
@@ -40,6 +67,7 @@ class DataVisualizer:
         # Simplify DataFrame name
         total_load = self.data_raw.projection_row_seriess['demand_inflexible_classic']
         total_load.index.name = "Bidding Zones"
+        total_load = total_load.sort_index()
 
         fig, ax = plt.subplots(figsize=(12, 6))
         sns.barplot(ax=ax,
@@ -53,7 +81,10 @@ class DataVisualizer:
                     color=self.palette[1],  # blue
                     label='Selected Bidding Zones')
         ax.tick_params(axis='x', rotation=45)
-        ax.set_ylabel('Annual Total Load (TWh)')
+        prettify_subplots(ax)
+        # ax.set_ylabel('Annual Total Load (TWh)')
+        ax.set_xlabel("")
+        ax.set_title('Annual Total Load [TWh]', loc='left')
         fig.tight_layout()
         plt.show()
 
@@ -89,9 +120,10 @@ class DataVisualizer:
             # Divide the total annual demand by 8760 to get the mean hourly demand
             # and sum over the selected bidding zones to the the hourly system demand
             mean_inflex_dem_by_type.loc[k] = dem_df[self.data.bidding_zones].div(8760).sum()
-        
+
         # Flexible demand is represented by its capacity
         cap_flex_dem_classic = self.data.flexible_demands_dfs['demand_flexible_classic']['capacity'].sum(axis=1)[0]
+        cap_flex_dem_classic += self.data.agg_ptx.capacity_el.sum() + self.data.agg_dh.capacity_el.sum()
 
         # exclude unused demand types
         mean_inflex_dem_by_type = mean_inflex_dem_by_type.drop(labels='demand_inflexible_ev')
@@ -106,22 +138,28 @@ class DataVisualizer:
             cap_hydro_ps
         ])
 
+        installed_caps_GW = installed_caps.div(1e3).sort_values()
+
         # Plot the installed capacities and mean inflexible demand
         fig, ax = plt.subplots(figsize=(12,6))
         sns.barplot(ax=ax,
-                    x=installed_caps.index,
-                    y=installed_caps.div(1e3).values,  # MW -> GW
-                    color=self.palette[1])
-        ax.axhline(y=mean_inflex_dem_by_type.div(1e3).values, color=self.palette[0], linestyle='--', label='Avg. hourly inflexible classic demand [GW]')
-        ax.axhline(y=cap_flex_dem_classic/1e3, color=self.palette[0], linestyle='-.', label='Capacity of flexible demand [GW]')
+                    y=installed_caps_GW.index,
+                    x=installed_caps_GW.values,  # MW -> GW
+                    color=self.palette[1],
+                    orient='h',)
+        ax.axvline(x=mean_inflex_dem_by_type.div(1e3).values, color=self.palette[0], linestyle='-', label='Inflexible demand (avg.)')
+        ax.axvline(x=cap_flex_dem_classic/1e3, color=self.palette[2], linestyle='-', label='Flexible demand')
         ax.legend()
-        ax.tick_params(axis='x', rotation=45)
-        ax.set_xlabel("Installed capacity by feedstock, VRE technology, & inflexible demand type")
-        ax.set_ylabel('Total Installed Capacity [GW]')
+        # ax.tick_params(axis='x', rotation=45)
+        # ax.set_xlabel("Installed capacity by feedstock, VRE technology, & inflexible demand type")
+        # ax.set_ylabel('Total Installed Capacity [GW]')
+        ax.set_xlabel('Total Installed Capacity [GW]')
+        ax.set_ylabel("")
+        prettify_subplots(ax)
         fig.tight_layout()
         plt.show()
 
-    def plot_profiles(self, starting_hour: int) -> None:
+    def plot_profiles(self, starting_hour: int, chosen_zones : list = None) -> None:
         '''
         Plot time series profiles for:
         - Hourly VRE (capacity factors)
@@ -146,7 +184,10 @@ class DataVisualizer:
             profile_dict[profile_label].index = self.dates 
 
             # simplify naming and only plot the chosen bidding zones to avoid a crowded plot
-            profile_z = profile_dict[profile_label][self.data.bidding_zones]
+            if chosen_zones is not None:
+                profile_z = profile_dict[profile_label][chosen_zones]
+            else:
+                profile_z = profile_dict[profile_label][self.data.bidding_zones]
 
             # plot the profile for an example WEEK
             profile_z.iloc[starting_hour:starting_hour+168].plot.line(ax=ax[profile_idx, 0], color=self.palette[:len(profile_z.columns)])
