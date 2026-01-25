@@ -694,7 +694,7 @@ class NBSModel:
                         ax[1].axhline(self.zeta_O.X, ls="-.", label="VaR after")
                     else:
                         ax[1].axhline(zeta_O_power_costs, ls="-.", label="VaR after")
-                ax[1].set_title(fr"Buyer POWER COSTS (no WTP) – $\beta_B=${self.beta_B}")
+                ax[1].set_title(fr"Buyer POWER COSTS (no WTP) – $\beta^B=${self.beta_B}")
             else:  # histogram
                 ax[0].hist(self.PI_D_w, color='r', alpha=0.5, label='Before')
                 ax[0].axvline(x=self.VAR_D, color='r', linestyle='--', label='VaR before')
@@ -707,14 +707,14 @@ class NBSModel:
                 ax[0].axvline(x=self.zeta_D.X, linestyle='--', label='VaR after')
                 ax[1].hist(self.y_O.X, alpha=0.5, label='after PPA')
                 ax[1].axvline(x=self.zeta_O.X, linestyle='--', label='VaR after')
-                ax[1].set_title(fr"Buyer UTILITY – $\beta_B=${self.beta_B}")
+                ax[1].set_title(fr"Buyer UTILITY – $\beta^B=${self.beta_B}")
 
-            ax[0].set_title(fr"{self.PPA_profile}{(f"({self.BL_compliance_perc})" if self.BL else "")}: Producer PROFITS – $\beta_P=${self.beta_P}   ")
+            ax[0].set_title(fr"{self.PPA_profile}{(f"({self.BL_compliance_perc})" if self.BL else "")}: Producer PROFITS – $\beta^P=${self.beta_P}   ")
             prettify_subplots(ax)
             ax[0].legend_.remove()
             for ax_ in ax:
                 ax_.set_xlabel("Scenario")
-            ax[0].set_ylabel("Profit or costs [€]")
+            ax[0].set_ylabel(r"Profit or costs [€/MW]")
             plt.tight_layout()
             plt.show()
         else:
@@ -762,7 +762,7 @@ class NBSModel:
                 ax.plot(self.SOC.X[hours_shown, w_BESS], label="SOC", ls=':', alpha=0.3)
                 ax.axhline(self.M.X, c='k', label="BL volume", alpha=.4)
                 if self.beta_P == 1.0:
-                    ax.set_title(r'Beware! Nonsensical for $\beta_P=1.0$')
+                    ax.set_title(r'Beware! Nonsensical for $\beta^P=1.0$')
                 # plt.plot(d.y_ch.X[: ,w] * d.y_dch.X[: ,w])
                 prettify_subplots(ax)
         else:
@@ -925,16 +925,16 @@ class NBSMultModel:
         # unify_palette_cyclers(axs)
         im1 = axs[0].imshow(S_vals, origin='lower', cmap='inferno',
                             extent=[min(self.beta_P_list), max(self.beta_P_list), min(self.beta_B_list), max(self.beta_B_list)], aspect='auto')
-        axs[0].set_title("Strike price (S in [€/MWh])")
-        axs[0].set_xlabel(r"$\beta_P$")
-        axs[0].set_ylabel(r"$\beta_B$")
+        axs[0].set_title("Strike price ($S$) in [€/MWh]")
+        axs[0].set_xlabel(r"$\beta^P$")
+        axs[0].set_ylabel(r"$\beta^B$")
         fig.colorbar(im1, ax=axs[0])
 
         im2 = axs[1].imshow(volume_vals, origin='lower', cmap='cividis',
                             extent=[min(self.beta_P_list), max(self.beta_P_list), min(self.beta_B_list), max(self.beta_B_list)], aspect='auto')
-        axs[1].set_title(f"{self.PPA_profile} volume {"(M in [MW])" if self.BL else "($\\gamma$ in [pu])"}")
-        axs[1].set_xlabel(r"$\beta_P$")
-        axs[1].set_ylabel(r"$\beta_B$")
+        axs[1].set_title(f"{self.PPA_profile} volume {" ($M$) in [MW]" if self.BL else " ($\\gamma$) in [p.u.]"}")
+        axs[1].set_xlabel(r"$\beta^P$")
+        axs[1].set_ylabel(r"$\beta^B$")
         fig.colorbar(im2, ax=axs[1])
 
         prettify_subplots(axs)

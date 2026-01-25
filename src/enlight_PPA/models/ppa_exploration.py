@@ -374,28 +374,28 @@ class PPAModeling:
         v_min_excl_batt_ext = v_min_ext-batt_component_of_PPA_delivery_ext
 
         # plot as step (stair) plot
-        axs[axs_idx].step(times_ext, P_fore_ext, where='post', label='P_fore', linestyle='--')
+        axs[axs_idx].step(times_ext, P_fore_ext, where='post', label=r'P$_t^{\text{fore}}$', linestyle='--')
         # axs[0].fill_between(times_ext, 0, v_min_ext, step='post', alpha=0.5, label='PPA')
         # Instead of the code right above, don't plot the batt. dch. part of the PPA delivery
         if not self.PPA_profile == 'BL':
-            axs[axs_idx].fill_between(times_ext, 0, v_min_excl_batt_ext, step='post', alpha=.8, label=r'DA dispatch, paid @ $\lambda^{PPA}$')
-            axs[axs_idx].fill_between(times_ext, v_min_excl_batt_ext, p_DA_ext - y_dch_ext, step='post', alpha=.8,label=r'DA dispatch, paid @ $\lambda^{DA}_t$')
+            axs[axs_idx].fill_between(times_ext, 0, v_min_excl_batt_ext, step='post', alpha=.8, label=r'p$_t^{\text{DA}}$ (excl. v$_t^{\text{dch}}$), paid @ $\lambda^{\text{PPA}}$')
+            axs[axs_idx].fill_between(times_ext, v_min_excl_batt_ext, p_DA_ext - y_dch_ext, step='post', alpha=.8,label=r'p$_t^{\text{DA}}$ (excl. v$_t^{\text{dch}}$), paid @ $\lambda^{\text{DA}}_t$')
         else:
             # skip the PPA color
-            axs[axs_idx].fill_between(times_ext, 0, 0, step='post', alpha=.8, label=r'DA dispatch, paid @ $\lambda^{PPA}$')
+            axs[axs_idx].fill_between(times_ext, 0, 0, step='post', alpha=.8, label=r'p$_t^{\text{DA}}$ (excl. v$_t^{\text{dch}}$), paid @ $\lambda^{\text{PPA}}$')
             # actual plot
-            axs[axs_idx].fill_between(times_ext, 0, p_DA_ext - y_dch_ext, step='post', alpha=.8,label=r'DA dispatch, paid @ $\lambda^{DA}_t$')
+            axs[axs_idx].fill_between(times_ext, 0, p_DA_ext - y_dch_ext, step='post', alpha=.8,label=r'p$_t^{\text{DA}}$ (excl. v$_t^{\text{dch}}$), paid @ $\lambda^{\text{DA}}_t$')
         axs[axs_idx].fill_between(times_ext, p_DA_ext - y_dch_ext,
-                        p_DA_ext, step='post', alpha=.8, label='Batt. discharge')
+                        p_DA_ext, step='post', alpha=.8, label=r'Batt. discharge (v$_t^{\text{dch}}$)')
         axs[axs_idx].fill_between(times_ext, p_DA_ext,
                         p_DA_ext + y_charge_ext, 
-                        step='post', alpha=.8, label='Batt. charge')
+                        step='post', alpha=.8, label=r'Batt. charge (v$_t^{\text{ch}}$)')
         # baseload line
-        axs[axs_idx].axhline(self.V_BL, linestyle='-', c='k', label='V_BL')
+        axs[axs_idx].axhline(self.V_BL, linestyle='-', c='k', label=r'V$^{\text{BL}}$')
 
         # shade hours of negative DA prices
         mask_ext, times_ext_new = make_negative_DA_price_mask(self.times, self.lambda_DA)
-        axs[axs_idx].fill_between(times_ext_new, 0, np.max(self.p_DA.sol + self.y_charge.sol), where=mask_ext, hatch="/", facecolor=self.palette[-1], edgecolor=self.palette[-1], alpha=.1, label=r"$\lambda^{DA}_t < 0$", zorder=0)
+        axs[axs_idx].fill_between(times_ext_new, 0, np.max(self.p_DA.sol + self.y_charge.sol), where=mask_ext, hatch="/", facecolor=self.palette[-1], edgecolor=self.palette[-1], alpha=.1, label=r"$\lambda^{\text{DA}}_t < 0$", zorder=0)
         
         # title and xlabel
         # PPAcov2 = 100 * self.v_min.sol.sum(dim='T').item() / (self.V_BL*self.T) # doesn't work for the "current" settlement mechanism
@@ -416,9 +416,9 @@ class PPAModeling:
         # plot prices
         lambda_DA_ext = np.append(self.lambda_DA, self.lambda_DA[-1])
         lambda_max_ext = np.append(self.lambda_max, self.lambda_max[-1])
-        axs[axs_idx].axhline(self.lambda_PPA, linestyle='-', c='k', label=r'$\lambda^{PPA}$')
-        axs[axs_idx].step(times_ext, lambda_DA_ext, where='post', label=r'$\lambda^{DA}_t$', ls='--')
-        axs[axs_idx].step(times_ext, lambda_max_ext, where='post', label=r'$\lambda^{max}$', ls='--')
+        axs[axs_idx].axhline(self.lambda_PPA, linestyle='-', c='k', label=r'$\lambda^{\text{PPA}}$')
+        axs[axs_idx].step(times_ext, lambda_DA_ext, where='post', label=r'$\lambda^{\text{DA}}_t$', ls='--')
+        axs[axs_idx].step(times_ext, lambda_max_ext, where='post', label=r'$\lambda^{\text{max}}_t$', ls='--')
         # title and xlabel
         axs[axs_idx].set_title('Market & PPA Prices\n[€/MWh]', loc='left')
         axs[axs_idx].set_xlabel('Time')
@@ -481,17 +481,17 @@ class PPAModeling:
         p_DA_negp_ext = p_DA_ext * (lambda_DA_ext < 0)
         
         # plot as step (stair) plot
-        axs[axs_idx].step(times_ext, P_fore_ext, where='post', label='P_fore', linestyle='--')
+        axs[axs_idx].step(times_ext, P_fore_ext, where='post', label=r'P$_t^{\text{fore}}$', linestyle='--')
         
         # # skip the PPA color
         # axs[axs_idx].fill_between(times_ext, 0, 0, step='post', alpha=.8)#, label='PPA')
         # actual plot
-        axs[axs_idx].fill_between(times_ext, 0, p_DA_negp_ext, step='post', alpha=.8,label=r'DA $\left(\text{where}\;\lambda^{DA}_t < 0\right)$')
-        axs[axs_idx].fill_between(times_ext, p_DA_negp_ext, p_DA_ext, step='post', alpha=.8,label='DA')
+        axs[axs_idx].fill_between(times_ext, 0, p_DA_negp_ext, step='post', alpha=.8,label=r'p$_t^{\text{DA}}$'+r' $\left(\text{where}\;\lambda^{\text{DA}}_t < 0\right)$')
+        axs[axs_idx].fill_between(times_ext, p_DA_negp_ext, p_DA_ext, step='post', alpha=.8,label=r'p$_t^{\text{DA}}$')
 
         # shade hours of negative DA prices
         mask_ext, times_ext_new = make_negative_DA_price_mask(self.times, self.lambda_DA)
-        axs[axs_idx].fill_between(times_ext_new, 0, np.max(self.p_DA.sol), where=mask_ext, hatch="/", facecolor=self.palette[-1], edgecolor=self.palette[-1], alpha=.1, label=r"$\lambda^{DA}_t < 0$", zorder=0)
+        axs[axs_idx].fill_between(times_ext_new, 0, np.max(self.p_DA.sol), where=mask_ext, hatch="/", facecolor=self.palette[-1], edgecolor=self.palette[-1], alpha=.1, label=r"$\lambda^{\text{DA}}_t < 0$", zorder=0)
         
         # title and xlabel
         if presentation:
@@ -508,9 +508,9 @@ class PPAModeling:
         # plot prices
         lambda_DA_ext = np.append(self.lambda_DA, self.lambda_DA[-1])
         lambda_sum_ext = lambda_DA_ext + self.lambda_PPA
-        axs[axs_idx].axhline(self.lambda_PPA, linestyle='-', c='k', label=r'$\lambda^{PPA}$')
-        axs[axs_idx].step(times_ext, lambda_DA_ext, where='post', label=r'$\lambda^{DA}_t$', ls='--')
-        axs[axs_idx].step(times_ext, lambda_sum_ext, where='post', label=r'$\lambda^{DA}_t+\lambda^{PPA}$', ls='--')
+        axs[axs_idx].axhline(self.lambda_PPA, linestyle='-', c='k', label=r'$\lambda^{\text{PPA}}$')
+        axs[axs_idx].step(times_ext, lambda_DA_ext, where='post', label=r'$\lambda^{\text{DA}}_t$', ls='--')
+        axs[axs_idx].step(times_ext, lambda_sum_ext, where='post', label=r'$\lambda^{\text{DA}}_t+\lambda^{\text{PPA}}$', ls='--')
         # title and xlabel
         axs[axs_idx].set_title('Market & PPA Prices\n[€/MWh]', loc='left')
         axs[axs_idx].set_xlabel('Time')

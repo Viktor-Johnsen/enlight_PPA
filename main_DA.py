@@ -92,7 +92,7 @@ if __name__ == "__main__":
         autopct="%1.1f%%",
         startangle=90
     )
-    ax.set_title(f"Total annual electricity generation by technology ({scenario_name})")
+    ax.set_title(f"Total annual electricity generation by technology ({scenario_name.replace("_", " ")})")
     ax.axis("equal")
 
     plt.tight_layout()
@@ -121,3 +121,13 @@ if __name__ == "__main__":
 
     plt.tight_layout()
     plt.show()
+
+    # from enlight_PPA.utils.nbs_utils import prettify_subplots
+    # fig,ax=plt.subplots(figsize=(14,10))
+    # for z in ["DK1","DELU","FR","CZ"]:
+    #     prices = d.results_dict['electricity_prices'][z].sort_values().values[::-1]
+    #     ax.plot(prices, label=z)
+    # ax.set_xlabel("Hour of year [h]")
+    # ax.set_title("Price-duration curves in a subset of bidding zones\nSpot price [€/MWh]", loc='left')
+    # prettify_subplots(ax)
+    # plt.show()

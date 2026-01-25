@@ -8,7 +8,7 @@ import pandas as pd
 from enlight_PPA.config_path import SIMULATIONS_DIR
 
 # --- Load results ---
-file_name = "mult_nbs_results__BL_0_[0.  0.2 0.4 0.6 0.8 1. ].pkl"
+file_name = "mult_nbs_results__PaP_0_[0.  0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1. ].pkl"
 with open(SIMULATIONS_DIR / "NBS_results" / file_name, "rb") as f:
     results = pickle.load(f)
 

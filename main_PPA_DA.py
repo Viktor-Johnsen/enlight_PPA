@@ -63,7 +63,7 @@ if __name__ == "__main__":
     # For good measure, check that the scenarios align. If not, uncomment and run the first two lines.
     for da_obj in nbs_runner.da_data_dict.values():
         print(da_obj.bidding_zones)
-    print(nbs_runner.da_data_dict["scenario_1"].agg_ptx.groupby("zone_el").sum().capacity_el.sum())
+    print("######\nTOTAL PtX capacity:" , nbs_runner.da_data_dict["scenario_4"].agg_ptx.groupby("zone_el").sum().capacity_el.sum(), "\n#######")
 
     beta_O_list = [0.4]
     beta_D_list = [0.4]
@@ -111,7 +111,7 @@ if __name__ == "__main__":
         pap2da = PaP2DA(
             z=PPA_zone,
             s=nbs_runner.mult_nbs_models.models[beta_O_chosen][beta_D_chosen].S.X,
-            gamma=0.9, #nbs_runner.mult_nbs_models.models[beta_O_chosen][beta_D_chosen].gamma.X,
+            gamma=nbs_runner.mult_nbs_models.models[beta_O_chosen][beta_D_chosen].gamma.X,
             solar_pv_el_cap=nbs_runner.ppa_calcs_dict["scenario_1"].solar_pv_el_cap,
             on_wind_el_cap=nbs_runner.ppa_calcs_dict["scenario_1"].on_wind_el_cap,
             off_wind_el_cap=nbs_runner.ppa_calcs_dict["scenario_1"].off_wind_el_cap,
@@ -144,7 +144,7 @@ if __name__ == "__main__":
         bl2da_dict = {}
         d_p_dict = {}
         # crs = [0.50, 0.60, 0.70, 0.75]
-        crs = [0.930] # DELU, full VRE: 0.816. DELU, onwind: 0.724, full VRE 2040PtX: 0.930
+        crs = [0.816] # DELU, full VRE: 0.816. DELU, onwind: 0.724, full VRE 2040PtX: 0.930
         for cr in crs:
             print(cr)
             bl2da_dict[cr] = BL2DA(
@@ -284,8 +284,8 @@ if __name__ == "__main__":
             y = pdc[cr].values
             ax.plot(y, ls="-", label=pdc_labels[i])
         prettify_subplots(ax)
-        ax.set_xlabel("Hour of year [h]")
-        ax.set_title(f"{PPA_zone}: Price-duration curves before and after {PPA_profile}.\nSpot price [€/MWh]", loc='left')
+        ax.set_xlabel("Hours [h]")
+        ax.set_title(f"{PPA_zone}: Price-duration curves before and after {PPA_profile+(" (single-VRE)" if FAKE_PURE_ONWIND else "")}.\nSpot price [€/MWh]", loc='left')
         plt.show()
 
         for z in d_p_dict[0.00].bidding_zones:
@@ -334,7 +334,7 @@ if __name__ == "__main__":
                 axs[i].scatter(x=x, y=y_z, label=f"{bid} cr={cr}", alpha=0.1)
             for ax in axs:
                 prettify_subplots(ax)
-            axs[-1].set_xlabel("Hours of year [h]")
+            axs[-1].set_xlabel("Hours [h]")
             axs[0].set_title(f"{PPA_zone}: Flexible load-duration curves based on zonal price-duration curve\nPower consumption[MW]", loc='left')
             plt.show()
 
@@ -490,8 +490,8 @@ if __name__ == "__main__":
         handles, labels = ax[0].get_legend_handles_labels()
         ax[1].legend(handles, labels, loc="upper center", frameon=False)
         ax[1].axis("off")
-        ax[0].set_xlabel("Utility|Profit [b.€]")
-        ax[2].set_xlabel("Utility|Profit [b.€]")
+        ax[0].set_xlabel("Payoff [b.€]")
+        ax[2].set_xlabel("Payoff [b.€]")
         ax[0].set_title(fr"{PPA_zone}: Individual PS and CS by type -- {PPA_profile} ($M=${d_p.PPA2DA.m/1e3:.1f} GW, $S=${d_p.PPA2DA.s:.2f} €/MWh)", loc="left")
         ax[2].set_title(f"REPEATED without {keys_s[0]}", loc="left")
 
@@ -585,7 +585,7 @@ if __name__ == "__main__":
         ax.plot(d_p.results_dict['electricity_prices'][PPA_zone].sort_values()[::-1].values, label="w/ PaP", ls='--')
         ax.set_title(f"{PPA_zone}: Price-duration curves before and after {PPA_profile}\nSpot price [€/MWh]", loc='left')
         ax.set_ylabel("")
-        ax.set_xlabel("Hour of year [h]")
+        ax.set_xlabel("Hours [h]")
         prettify_subplots(ax)
         plt.show()
 
@@ -666,7 +666,7 @@ if __name__ == "__main__":
 
         ax.set_xticks(x, keys, rotation=90)
         ax.set_ylabel("")
-        ax.set_title(fr"{PPA_zone}: Individual producer and consumer surpluses by technology/type -- before and after {PPA_profile} ($\gamma=${d_p.PPA2DA.gamma:.2f})"+"\nUtility|Profit [b.€]", loc="left")
+        ax.set_title(fr"{PPA_zone}: Individual producer and consumer surpluses by technology/type -- before and after {PPA_profile} ($\gamma=${d_p.PPA2DA.gamma:.2f})"+"\nPayoff [b.€]", loc="left")
         prettify_subplots(ax)
         plt.show()
         #conv, dh, hres, ptx, 
@@ -758,8 +758,8 @@ if __name__ == "__main__":
         handles, labels = ax[0].get_legend_handles_labels()
         ax[1].legend(handles, labels, loc="upper center", frameon=False)
         ax[1].axis("off")
-        ax[0].set_xlabel("Utility|Profit [b.€]")
-        ax[2].set_xlabel("Utility|Profit [b.€]")
+        ax[0].set_xlabel("Payoff [b.€]")
+        ax[2].set_xlabel("Payoff [b.€]")
         ax[0].set_title(fr"{PPA_zone}: Individual PS and CS by type -- {PPA_profile} ($S=${d_p.PPA2DA.s:.2f} €/MWh, $\gamma=${d_p.PPA2DA.gamma:.2f})", loc="left")
         ax[2].set_title(f"REPEATED without {keys_s[0]}", loc="left")
 
@@ -850,7 +850,7 @@ if __name__ == "__main__":
             prettify_subplots(ax)
             ax.set_title('Behaviour of a "new marginal generator" after the PPA implementation', loc='left')
             ax.set_ylabel("Power generation [MW]")
-            ax.set_xlabel("Hour of year [h]")
+            ax.set_xlabel("Hours [h]")
             plt.show()
 
         fig, ax = plt.subplots(figsize=(12,6))
@@ -861,7 +861,7 @@ if __name__ == "__main__":
         prettify_subplots(ax)
         ax.set_title("Behaviour of the Producer's VRE capacity after the PPA implementation", loc='left')
         ax.set_ylabel("Power generation [MW]")
-        ax.set_xlabel("Hour of year [h]")
+        ax.set_xlabel("Hours [h]")
         plt.show()
 
         # Inspect specific hours to understand negative prices even though total FLEX+STOR+TRANS cap is not exceeded

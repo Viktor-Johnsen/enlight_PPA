@@ -31,7 +31,7 @@ if __name__ == "__main__":
                     # On a zonal level: x_tot_Z...
                     x_tot_Z=0.9999,  # use 99.99% of the total zonal VRE (Hydro ror excl.) capacity
                     y_batt=0,  # If 0: use the zonal-level P_BESS/P_VRE ratio
-                    S_UB=45,
+                    S_UB=42,
     )
 
     # For good measure, check that the scenarios align. If not, uncomment and run the first two lines.
@@ -42,8 +42,8 @@ if __name__ == "__main__":
     # print(f"S = {d.S.X:.2f} €/MWh, volume = {d.M.X if d.PPA_profile=="BL" else d.gamma.X:.2f} {"MW" if d.PPA_profile=="BL" else "%"}")
 
     # Define ranges for beta
-    beta_B_list = np.round(np.arange(0.0, 1.01, 0.3), 2)  # avoid floating point issues
-    beta_P_list = np.round(np.arange(0.0, 1.01, 0.3), 2)  # avoid floating point issues
+    beta_B_list = np.round(np.arange(0.0, 1.01, 0.1), 2)  # avoid floating point issues
+    beta_P_list = np.round(np.arange(0.0, 1.01, 0.1), 2)  # avoid floating point issues
     nbs_runner.mult_nbs(beta_B_list=beta_B_list,
                         beta_P_list=beta_P_list)
 
@@ -51,11 +51,11 @@ if __name__ == "__main__":
     nbs_runner.save_mult_nbs()
 
     # Verify combliance rate
-    d=nbs_runner.mult_nbs_models.models[0.5][0.5]
+    d=nbs_runner.mult_nbs_models.models[0.5][0.1]
 
     d.visualize_example_profit_dist(bars=True, presentation=True)
     
-    d2=nbs_runner.mult_nbs_models.models[0.5][0.5]
+    d2=nbs_runner.mult_nbs_models.models[0.1][0.5]
     d2.visualize_example_profit_dist(bars=True, presentation=True)
     
     d.visualize_example_outcome(show_all_scens=True)
@@ -120,3 +120,64 @@ if __name__ == "__main__":
     ax.set_xlabel("Hours [h]")
     ax.set_title(f"Price-duration curves in {PPA_zone}\nSpot price [€/MWh]", loc="left")
     plt.show()
+
+    # # plot fore_scen_dist
+    # M_low = nbs_runner.mult_nbs_models.results_volume[0.0][1.0]
+    # M_high = nbs_runner.mult_nbs_models.results_volume[1.0][0.0]
+    # n_scens = nbs_runner.P_fore_w.shape[1]
+
+    # fig, ax = plt.subplots(figsize=(14, 10))
+
+    # # --- Cumulative distribution on right y-axis ---
+    # ax2 = ax.twinx()
+    # ax2.hist(
+    #     nbs_runner.P_fore_w,
+    #     bins=44,
+    #     density=True,
+    #     alpha=0.7,
+    #     label=["Scen. 1", "Scen. 2", "Scen. 3", "Scen. 4"]
+    # )
+    # ax2.set_ylabel("Probability density")
+
+    # # --- Histogram (PDF) on left y-axis ---
+    # ax.hist(
+    #     nbs_runner.P_fore_w,
+    #     bins=3000,
+    #     density=True,
+    #     cumulative=True,
+    #     histtype="step",
+    #     linewidth=2,
+    #     label=["Scen. 1", "Scen. 2", "Scen. 3", "Scen. 4"]
+    # )
+    # ax.set_ylabel("Cumulative probability")
+    # ax.set_xlabel(f"Aggregate forecast in {PPA_zone} [MW]")
+    # # --- Vertical lines ---
+    # ax.axvline(
+    #     M_low,
+    #     label="Risk-averse PRODUCER",
+    #     c=nbs_runner.palette[n_scens+1],
+    #     lw=3,
+    #     ls="--"
+    # )
+    # ax.axvline(
+    #     M_high,
+    #     label="Risk-averse BUYER",
+    #     c=nbs_runner.palette[n_scens + 2],
+    #     lw=3,
+    #     ls="--"
+    # )
+
+    # # --- Legend & styling ---
+    # # --- Combine legends from both axes ---
+    # handles1, labels1 = ax.get_legend_handles_labels()
+    # handles2, labels2 = ax2.get_legend_handles_labels()
+
+    # ax.legend(
+    #     handles1 + handles2,
+    #     labels1 + labels2,
+    #     loc="upper right"
+    # )
+    # prettify_subplots(ax, legend=False)
+    # prettify_subplots(ax2, legend=False, grid=False)
+
+    # plt.show()
