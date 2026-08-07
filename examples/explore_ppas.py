@@ -26,9 +26,9 @@ if __name__ == "__main__":
     profile_types_BL = ['BL', 'BL–COMPLIANCE', 'C-BL', 'C-BL–RESTRICTED_CHARGING', 'AC-BL', 'AC-BL–RESTRICTED_CHARGING']
     profile_types_BL = ['BL', 'AC-BL', 'BL–COMPLIANCE']
 
-    include_price_curves = False
+    include_price_curves = True
 
-    settlements = profile_types_BL
+    settlements = profile_types_PaX
 
     models_dict = {}
     for p_ in settlements:

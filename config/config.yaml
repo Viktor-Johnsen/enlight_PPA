@@ -31,7 +31,7 @@ scenario_list:
 # Uncomment only one solver.
 # ============================================================================
 
-solver_name: "gurobi"
+solver_name: "highs"
   #- "highs", "gurobi", etc.  # Alternative solver, runs without a solver license
 
 # ============================================================#

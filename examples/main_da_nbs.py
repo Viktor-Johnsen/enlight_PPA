@@ -42,8 +42,8 @@ if __name__ == "__main__":
     # print(f"S = {d.S.X:.2f} €/MWh, volume = {d.M.X if d.PPA_profile=="BL" else d.gamma.X:.2f} {"MW" if d.PPA_profile=="BL" else "%"}")
 
     # Define ranges for beta
-    beta_B_list = np.round(np.arange(0.0, 1.01, 0.1), 2)  # avoid floating point issues
-    beta_P_list = np.round(np.arange(0.0, 1.01, 0.1), 2)  # avoid floating point issues
+    beta_B_list = np.round(np.arange(0.4, 0.41, 0.1), 2)  # avoid floating point issues
+    beta_P_list = np.round(np.arange(0.4, 0.41, 0.1), 2)  # avoid floating point issues
     nbs_runner.mult_nbs(beta_B_list=beta_B_list,
                         beta_P_list=beta_P_list)
 
@@ -51,11 +51,11 @@ if __name__ == "__main__":
     nbs_runner.save_mult_nbs()
 
     # Verify combliance rate
-    d=nbs_runner.mult_nbs_models.models[0.5][0.1]
+    d=nbs_runner.mult_nbs_models.models[0.4][0.4]
 
     d.visualize_example_profit_dist(bars=True, presentation=True)
     
-    d2=nbs_runner.mult_nbs_models.models[0.1][0.5]
+    d2=nbs_runner.mult_nbs_models.models[0.4][0.4]
     d2.visualize_example_profit_dist(bars=True, presentation=True)
     
     d.visualize_example_outcome(show_all_scens=True)

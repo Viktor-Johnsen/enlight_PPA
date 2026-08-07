@@ -164090,12 +164090,14 @@ Subject To
    - 56.20471360376999 p_DA[8756,3] - 56.20471360376999 p_DA[8757,3]
    - 56.20471360376999 p_DA[8758,3] - 56.20471360376999 p_DA[8759,3]
    - 8760 Z = 0
- c_diff_D: - u_D + x_D = -47283.61511016005
- c_diff_O: - u_O + x_O = -1.3283907807126751e+07
- c_uD: - zeta_D + eta_D_w[0] + eta_D_w[1] + eta_D_w[2] + eta_D_w[3] + u_D
-   = 0
- c_uO: - zeta_O + eta_O_w[0] + eta_O_w[1] + eta_O_w[2] + eta_O_w[3] + u_O
-   = 0
+ c_diff_D: - u_D + x_D = -51902.86844965484
+ c_diff_O: - u_O + x_O = -1.3297774129889432e+07
+ c_uD: - 0.4 zeta_D + 0.4 eta_D_w[0] + 0.4 eta_D_w[1] + 0.4 eta_D_w[2]
+   + 0.4 eta_D_w[3] + u_D - 0.15 y_D[0] - 0.15 y_D[1] - 0.15 y_D[2]
+   - 0.15 y_D[3] = 0
+ c_uO: - 0.4 zeta_O + 0.4 eta_O_w[0] + 0.4 eta_O_w[1] + 0.4 eta_O_w[2]
+   + 0.4 eta_O_w[3] + u_O - 0.15 y_O[0] - 0.15 y_O[1] - 0.15 y_O[2]
+   - 0.15 y_O[3] = 0
  c_CVaR_D[0]: - zeta_D + eta_D_w[0] + y_D[0] >= 0
  c_CVaR_D[1]: - zeta_D + eta_D_w[1] + y_D[1] >= 0
  c_CVaR_D[2]: - zeta_D + eta_D_w[2] + y_D[2] >= 0

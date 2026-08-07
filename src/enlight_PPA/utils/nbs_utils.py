@@ -42,12 +42,12 @@ def load_plot_configs(only_get_palette : bool = False) -> None:
     plt.rcParams.update({
         "font.family": "Arial",
         "font.size": 12,
-        "axes.titlesize": 12,
-        "axes.labelsize": 12,
-        "xtick.labelsize": 11,
-        "ytick.labelsize": 11,
-        "legend.fontsize": 11,
-        "figure.titlesize": 13
+        "axes.titlesize": 14,
+        "axes.labelsize": 14,
+        "xtick.labelsize": 13,
+        "ytick.labelsize": 13,
+        "legend.fontsize": 13,
+        "figure.titlesize": 15
     })
 
     return chosen_palette
